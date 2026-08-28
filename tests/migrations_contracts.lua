@@ -87,3 +87,18 @@ do
     check(NightShift.Migrations.checksum('abc') == NightShift.Migrations.checksum('abc'), 'migration checksum must be deterministic')
     check(NightShift.Migrations.checksum('abc') ~= NightShift.Migrations.checksum('abd'), 'migration checksum must detect content changes')
 end
+
+do
+    local db = newDatabase({}, true)
+    local runner = NightShift.Migrations.Runner.new({
+        db = db,
+        loadFile = function(path)
+            local handle = assert(io.open(path, 'r'))
+            local content = handle:read('*a')
+            handle:close()
+            return content
+        end
+    })
+    local result = runner:run()
+    check(result.ok and result.value.currentVersion == 9 and #result.value.applied == 9, 'registered SQL migrations must run from default definitions')
+end
