@@ -5,7 +5,7 @@ NightShift = NightShift or {}
 NightShift.DefaultConfig = {
     environment = 'development',
     provider = { mode = 'explicit', name = 'standalone' },
-    features = { physicalNpc = false, deposits = false, demand = false, heat = false },
+    features = { physicalNpc = false, deposits = false, demand = false, heat = false, persistence = false },
     servicePackages = {
         { id = 'standard', price = 100, duration = 30, locationIds = { 'configured_default' } }
     },

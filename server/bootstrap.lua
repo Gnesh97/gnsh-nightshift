@@ -20,6 +20,44 @@ local defaultStages = {
         })
         if not normalized then return NightShift.Result.err(err) end
         return { ok = true, config = normalized }
+    end,
+    db = function(context, bootstrap)
+        local options = bootstrap and bootstrap.options or {}
+        local configResult = bootstrap and bootstrap.results and bootstrap.results.config or {}
+        local config = configResult.config or configResult.value and configResult.value.config or NightShift.DefaultConfig
+        local adapter = options.databaseAdapter
+        if type(context) == 'table' and rawget(context, 'databaseAdapter') ~= nil then adapter = rawget(context, 'databaseAdapter') end
+        if adapter == nil and type(context) == 'table' and rawget(context, 'database') ~= nil then adapter = rawget(context, 'database') end
+        if adapter == nil then adapter = options.database end
+        if adapter == nil then
+            local persistence = config.features and config.features.persistence == true
+            if config.environment == 'development' and not persistence then
+                return { ok = true, deferred = true, reason = 'database adapter not configured' }
+            end
+            return NightShift.Result.err(NightShift.Errors.Codes.DB_UNAVAILABLE, 'database adapter is required for this environment', { stage = 'db' })
+        end
+        if type(adapter) ~= 'table' or type(adapter.healthCheck) ~= 'function' then
+            return NightShift.Result.err(NightShift.Errors.Codes.DB_UNAVAILABLE, 'database adapter does not expose healthCheck', { stage = 'db' })
+        end
+        local runner = options.migrationRunner
+        if type(context) == 'table' and rawget(context, 'migrationRunner') ~= nil then runner = rawget(context, 'migrationRunner') end
+        if not runner then
+            if not NightShift.Migrations or not NightShift.Migrations.Runner then
+                return NightShift.Result.err(NightShift.Errors.Codes.MIGRATION_DB_UNAVAILABLE, 'migration runner is unavailable', { stage = 'db' })
+            end
+            runner = NightShift.Migrations.Runner.new({
+                db = adapter,
+                migrations = options.migrations,
+                loadFile = options.loadMigration,
+                logger = options.logger
+            })
+        end
+        if type(runner) ~= 'table' or type(runner.run) ~= 'function' then
+            return NightShift.Result.err(NightShift.Errors.Codes.MIGRATION_DB_UNAVAILABLE, 'migration runner is unavailable', { stage = 'db' })
+        end
+        local migrationResult = runner:run()
+        if type(migrationResult) ~= 'table' or not migrationResult.ok then return migrationResult end
+        return { ok = true, database = adapter, migrations = migrationResult }
     end
 }
 for _, stage in ipairs(NightShift.Constants.STAGES) do

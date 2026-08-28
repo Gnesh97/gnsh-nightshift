@@ -20,6 +20,7 @@ server_scripts {
     'server/core/event_bus.lua',
     'server/adapters/database/interface.lua',
     'server/adapters/database/oxmysql.lua',
+    'server/core/migrations.lua',
     'server/bootstrap.lua'
 }
 client_script 'client/bootstrap.lua'

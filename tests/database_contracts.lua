@@ -33,6 +33,11 @@ do
     check(not transaction.ok and transaction.error.code == 'DB_TRANSACTION_FAILED', 'transaction rollback must be typed')
     local health = db:healthCheck()
     check(not health.ok and health.error.code == 'DB_HEALTHCHECK_FAILED', 'health failure must be typed')
+
+    local missing = NightShift.Database.new({ driver = {
+        query = function() return nil, "Table 'nightshift_schema_migrations' doesn't exist" end
+    } }):query('SELECT version FROM nightshift_schema_migrations')
+    check(not missing.ok and missing.error.code == 'DB_SCHEMA_MISSING', 'missing schema must be classified')
 end
 
 do

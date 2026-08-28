@@ -28,6 +28,12 @@ local function invalid(operation, message)
     return Result.err(Codes.DB_INVALID_ARGUMENT, message, { operation = operation })
 end
 
+local function isMissingSchema(message)
+    message = tostring(message or ''):lower()
+    return message:find("doesn't exist", 1, true) ~= nil or message:find('no such table', 1, true) ~= nil or
+        message:find('table not found', 1, true) ~= nil
+end
+
 local function invoke(driver, operation, ...)
     local method = driver and driver[operation]
     if type(method) ~= 'function' then
@@ -35,9 +41,16 @@ local function invoke(driver, operation, ...)
             operation = operation
         })
     end
-    local ok, value = pcall(method, driver, ...)
-    if not ok then
-        local code = operation == 'transaction' and Codes.DB_TRANSACTION_FAILED or Codes.DB_QUERY_FAILED
+    local ok, value, driverError = pcall(method, driver, ...)
+    if not ok or driverError ~= nil then
+        local code
+        if operation == 'transaction' then
+            code = Codes.DB_TRANSACTION_FAILED
+        elseif isMissingSchema(driverError or value) then
+            code = Codes.DB_SCHEMA_MISSING
+        else
+            code = Codes.DB_QUERY_FAILED
+        end
         return nil, Result.err(code, ('Database %s failed'):format(operation), { operation = operation })
     end
     return value

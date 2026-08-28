@@ -8,5 +8,6 @@ NightShift.FeatureDefaults = {
     deposits = false,
     notifications = true,
     demand = false,
-    heat = false
+    heat = false,
+    persistence = false
 }
