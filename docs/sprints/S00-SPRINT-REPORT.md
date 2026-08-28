@@ -55,13 +55,13 @@ QBCore, Qbox, ESX Legacy, and standalone are represented as capabilities. No fra
 
 ## Known issues
 
-- GitHub CLI authentication for account `Gnesh97` is currently invalid, so private remote creation and push remain pending outside this local S00 phase.
+- GitHub CLI authentication for account `Gnesh97` remained invalid during setup; the user supplied the private remote target directly.
 - Production resource implementation, automated runtime tests, and framework matrices remain intentionally deferred to S01+.
 
 ## Deferred items
 
 - S01 Resource Foundation, all FiveM/runtime code, and all later sprints.
-- Remote GitHub repository creation after the user re-authenticates `gh`.
+- `dev` is the ongoing development branch; `main` is the release branch.
 
 ## Exit Gate
 

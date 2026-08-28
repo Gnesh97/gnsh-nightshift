@@ -6,7 +6,7 @@ All notable changes to NightShift are documented here.
 
 ### S00 — Specification Freeze
 
-- Initialized repository and isolated `feat/s00-specification-freeze` branch.
+- Initialized repository with `dev` as the development branch and `main` as the release branch.
 - Added normative domain invariants for unified Worker/Client booking, participant validation, settlement, NPC identity, and location reservations.
 - Added provider capability matrix with server-authoritative contracts and safe fallbacks.
 - Added five architecture decision records for booking, NPC entities, authority, locations, and OneSync ownership.
