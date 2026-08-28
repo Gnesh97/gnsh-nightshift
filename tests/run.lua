@@ -4,6 +4,9 @@ load('shared/enums.lua'); load('shared/errors.lua'); load('shared/constants.lua'
 load('tests/core_contracts.lua')
 load('server/core/event_bus.lua')
 load('tests/event_bus_contracts.lua')
+load('server/adapters/database/interface.lua')
+load('server/adapters/database/oxmysql.lua')
+load('tests/database_contracts.lua')
 
 local function check(value, message) assert(value, message) end
 

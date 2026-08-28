@@ -12,6 +12,10 @@ All notable changes to NightShift are documented here.
 - Added pure-Lua lifecycle, configuration, core-contract, and event-bus regression coverage; database, providers, repositories, product services, and jobs remain deferred to S02+.
 - Hardened S01 after direct review: server bootstrap now starts on resource load, explicitly invalid stage/config results fail closed, Result values are caller-copied, non-finite clock input is safe, and token/webhook aliases are redacted.
 
+### S02 — Database & Persistence
+
+- **NS-020:** Added a provider-neutral database contract with query/single/scalar/insert/update/transaction operations, normalized affected-row/insert results, typed health failures, and an injectable oxmysql adapter; no service code depends on driver globals.
+
 ### S00 — Specification Freeze
 
 - Initialized repository with `dev` as the development branch and `main` as the release branch.
