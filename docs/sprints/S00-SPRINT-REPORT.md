@@ -39,6 +39,7 @@
 - Cancellation and availability validation passed for separate configuration-driven refunds/deposit release and healthy, fresh, server-owned `internal_availability` with `available=true`.
 - ADR validation passed for the exact five required filenames and all four required sections in each file.
 - `git diff --check 560e30a..HEAD` passed with no output after the final S00 hardening commit.
+- Codebase-memory index refreshed after final S00 hardening; `.superpowers/sdd` scratch remains excluded.
 - No automated project test runner exists yet; no production resource or runtime code was created in S00.
 
 ## Security / recovery / networking / performance

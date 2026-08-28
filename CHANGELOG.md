@@ -15,3 +15,4 @@ All notable changes to NightShift are documented here.
 - Clarified configuration-driven cancellation refunds/deposit releases and the healthy, fresh server-owned internal availability fallback.
 - Added the S00 Sprint Report; production resource implementation remains intentionally deferred until S01.
 - Kept S01 Resource Foundation and all runtime/FiveM implementation deferred.
+- Refreshed the codebase-memory index after final S00 contract hardening; S01 remains deferred.
