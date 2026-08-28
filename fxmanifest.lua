@@ -17,6 +17,7 @@ server_scripts {
     'server/core/result.lua',
     'server/core/clock.lua',
     'server/core/logger.lua',
+    'server/core/event_bus.lua',
     'server/bootstrap.lua'
 }
 client_script 'client/bootstrap.lua'
