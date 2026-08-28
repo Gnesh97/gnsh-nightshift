@@ -187,7 +187,25 @@ function Base:updateExpectedVersion(id, expectedVersion, changes)
     return Result.err(Codes.VERSION_CONFLICT, 'repository row version does not match', { id = id, expectedVersion = expectedVersion })
 end
 
+function Base:deleteExpectedVersion(id, expectedVersion)
+    if not validId(id) then return invalid('repository ID is invalid', { field = self._idColumn }) end
+    expectedVersion = tonumber(expectedVersion)
+    if not expectedVersion or expectedVersion < 1 or math.floor(expectedVersion) ~= expectedVersion then
+        return invalid('expected version is invalid')
+    end
+    local sql = ('DELETE FROM %s WHERE %s = ? AND version = ?'):format(quoteIdentifier(self._table), quoteIdentifier(self._idColumn))
+    local result = self._db:update(sql, { id, expectedVersion })
+    if type(result) ~= 'table' or not result.ok then return result end
+    local affected = tonumber(result.value and result.value.affectedRows) or 0
+    if affected > 0 then return Result.ok({ id = id, deleted = true, affectedRows = affected }) end
+    local exists, existsResult = self:_exists(id)
+    if exists == nil then return Result.err(Codes.REPOSITORY_STATE_UNKNOWN, 'row existence could not be verified', { id = id, cause = existsResult and existsResult.error and existsResult.error.code }) end
+    if not exists then return Result.err(Codes.REPOSITORY_NOT_FOUND, 'repository row was not found', { id = id }) end
+    return Result.err(Codes.VERSION_CONFLICT, 'repository row version does not match', { id = id, expectedVersion = expectedVersion })
+end
+
 Base.update = Base.updateExpectedVersion
+Base.delete = Base.deleteExpectedVersion
 Base.findByID = Base.findById
 
 Repositories.Base = Base

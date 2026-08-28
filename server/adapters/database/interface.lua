@@ -94,7 +94,7 @@ local function validateStatements(statements)
             return false
         end
     end
-    return true
+    return count > 0
 end
 
 function Database.new(options)
@@ -187,7 +187,7 @@ end
 
 function Database:healthCheck()
     local result = self:scalar('SELECT 1 AS health', {})
-    if not result.ok or result.value == nil then
+    if not result.ok or result.value == nil or (result.value ~= true and result.value ~= 1 and result.value ~= '1') then
         return Result.err(Codes.DB_HEALTHCHECK_FAILED, 'Database health check failed', {
             cause = result.error and result.error.code or Codes.DB_QUERY_FAILED
         })

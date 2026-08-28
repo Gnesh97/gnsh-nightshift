@@ -19,6 +19,7 @@ All notable changes to NightShift are documented here.
 - **NS-021 review hardening:** Classified missing schema errors, guarded malformed adapter/runner results, used positional migration marker parameters, and kept database/migration failures typed and fail-closed.
 - **NS-022:** Added versioned InnoDB schema migrations for worker/client profiles, bookings/events, NPC workers, locations/reservations, deposits/payments, reviews, favorites, relationships, mutable versions, and lookup/idempotency indexes.
 - **NS-023:** Added a provider-neutral base repository with safe identifier quoting, immutable row mapping, parameterized CRUD reads/inserts, conditional expected-version updates, and distinct not-found/version-conflict/state-unknown errors; documented repository boundaries and conventions.
+- **S02 review hardening:** rejected empty transactions and false health signals, protected migration file loading, added conditional versioned deletes, and expanded regression coverage for fail-closed persistence behavior.
 
 ### S00 — Specification Freeze
 

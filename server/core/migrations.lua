@@ -41,7 +41,9 @@ local function defaultLoadFile(path)
     local loadResourceFile = rawget(_G, 'LoadResourceFile')
     local getResourceName = rawget(_G, 'GetCurrentResourceName')
     if type(loadResourceFile) ~= 'function' or type(getResourceName) ~= 'function' then return nil end
-    local ok, content = pcall(loadResourceFile, getResourceName(), path)
+    local nameOk, resourceName = pcall(getResourceName)
+    if not nameOk or not text(resourceName) then return nil end
+    local ok, content = pcall(loadResourceFile, resourceName, path)
     return ok and content or nil
 end
 

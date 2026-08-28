@@ -20,6 +20,7 @@ do
     check(db:update('UPDATE test SET id = ?', { 2 }).value.affectedRows == 3, 'update must normalize affected rows')
     check(db:transaction({ { query = 'SELECT 1', parameters = {} } }).ok, 'transaction must return committed result')
     check(db:healthCheck().ok, 'health check must use adapter contract')
+    check(db:transaction({}).error.code == 'DB_INVALID_ARGUMENT', 'empty transaction must fail validation')
 end
 
 do
@@ -38,6 +39,9 @@ do
         query = function() return nil, "Table 'nightshift_schema_migrations' doesn't exist" end
     } }):query('SELECT version FROM nightshift_schema_migrations')
     check(not missing.ok and missing.error.code == 'DB_SCHEMA_MISSING', 'missing schema must be classified')
+
+    local unhealthy = NightShift.Database.new({ driver = { scalar = function() return false end } }):healthCheck()
+    check(not unhealthy.ok and unhealthy.error.code == 'DB_HEALTHCHECK_FAILED', 'false health result must fail closed')
 end
 
 do

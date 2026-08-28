@@ -23,6 +23,8 @@ do
     local updated = repo:updateExpectedVersion(7, 1, changes)
     check(updated.ok and updated.value.version == 2 and calls.update.sql:find('version = version + 1', 1, true), 'expected-version update must increment version conditionally')
     check(changes.status == 'ARRIVED', 'repository must not mutate caller changes')
+    local deleted = repo:deleteExpectedVersion(7, 1)
+    check(deleted.ok and deleted.value.deleted and calls.update.sql:find('DELETE FROM', 1, true), 'expected-version delete must be conditional')
 end
 
 do
