@@ -17,6 +17,7 @@ All notable changes to NightShift are documented here.
 - **NS-020:** Added a provider-neutral database contract with query/single/scalar/insert/update/transaction operations, normalized affected-row/insert results, typed health failures, and an injectable oxmysql adapter; no service code depends on driver globals.
 - **NS-021:** Added ordered, checksum-verified migration execution with fresh-install/repeat-boot handling, out-of-order/name drift detection, transactional migration markers, and production fail-closed database bootstrap integration; development defaults remain safely deferred without an adapter.
 - **NS-021 review hardening:** Classified missing schema errors, guarded malformed adapter/runner results, used positional migration marker parameters, and kept database/migration failures typed and fail-closed.
+- **NS-022:** Added versioned InnoDB schema migrations for worker/client profiles, bookings/events, NPC workers, locations/reservations, deposits/payments, reviews, favorites, relationships, mutable versions, and lookup/idempotency indexes.
 
 ### S00 — Specification Freeze
 

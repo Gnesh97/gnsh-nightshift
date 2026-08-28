@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS nightshift_bookings (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    idempotency_key VARCHAR(128) NOT NULL,
+    client_profile_id BIGINT UNSIGNED NULL,
+    worker_profile_id BIGINT UNSIGNED NULL,
+    npc_worker_id BIGINT UNSIGNED NULL,
+    service_package_id VARCHAR(96) NOT NULL,
+    location_id BIGINT UNSIGNED NULL,
+    status VARCHAR(32) NOT NULL,
+    mode VARCHAR(32) NOT NULL,
+    price_minor BIGINT UNSIGNED NOT NULL,
+    currency CHAR(3) NOT NULL DEFAULT 'USD',
+    correlation_id VARCHAR(96) NULL,
+    scheduled_at DATETIME(3) NULL,
+    completed_at DATETIME(3) NULL,
+    version INT UNSIGNED NOT NULL DEFAULT 1,
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_nightshift_booking_idempotency (idempotency_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

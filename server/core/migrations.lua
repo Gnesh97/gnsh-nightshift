@@ -205,7 +205,17 @@ function Runner:run()
     return Result.ok({ currentVersion = currentVersion, applied = appliedNames, count = #appliedNames })
 end
 
-Migrations.DefinitionFiles = Migrations.DefinitionFiles or { '001_schema_version.sql' }
+Migrations.DefinitionFiles = Migrations.DefinitionFiles or {
+    '001_schema_version.sql',
+    '002_profiles.sql',
+    '003_bookings.sql',
+    '004_booking_events.sql',
+    '005_npc_profiles.sql',
+    '006_locations.sql',
+    '007_payments.sql',
+    '008_relationships.sql',
+    '009_indexes.sql'
+}
 Migrations.checksum = checksum
 Migrations.Runner = Runner
 Migrations.new = Runner.new
