@@ -91,6 +91,37 @@ do
     local normalized, err = NightShift.Validators.validateConfig(value)
     check(not normalized and err.code == 'PROVIDER_UNAVAILABLE', 'auto detection must not silently fall back')
 end
+do
+    local value = validConfig({ provider = { mode = 'auto' } })
+    local normalized, err = NightShift.Validators.validateConfig(value, { resolveProvider = function() return false end })
+    check(not normalized and err.code == 'PROVIDER_UNAVAILABLE', 'malformed resolver result must be typed unavailable')
+    normalized, err = NightShift.Validators.validateConfig(value, { resolveProvider = function() return { name = 'standalone', supported = true, available = true, capabilities = {} } end })
+    check(not normalized and err.code == 'PROVIDER_UNAVAILABLE', 'empty capabilities must be unavailable')
+end
+do
+    local value = validConfig(); value.servicePackages = { [2] = value.servicePackages[1] }
+    local normalized, err = NightShift.Validators.validateConfig(value)
+    check(not normalized and err.code == 'INVALID_CONFIG', 'sparse service arrays must fail')
+    value = validConfig(); value.servicePackages[1].locationIds = { 'configured_default', 'configured_default' }
+    normalized, err = NightShift.Validators.validateConfig(value)
+    check(not normalized and err.code == 'INVALID_LOCATION_REFERENCE', 'duplicate location references must fail')
+end
+do
+    local value = validConfig(); value.features = false
+    local normalized, err = NightShift.Validators.validateConfig(value)
+    check(not normalized and err.code == 'INVALID_CONFIG', 'malformed features must fail')
+    value = validConfig(); value.locations[1].category = 'arbitrary'
+    normalized, err = NightShift.Validators.validateConfig(value)
+    check(not normalized and err.code == 'INVALID_CONFIG', 'invalid location category must fail')
+end
+do
+    local value = validConfig(); value.demand = { window = math.huge }
+    local normalized, err = NightShift.Validators.validateConfig(value)
+    check(not normalized and err.code == 'INVALID_CONFIG', 'unsafe demand placeholder must fail')
+    value = validConfig(); value.npcProfiles[1].description = 'graphic content'
+    normalized, err = NightShift.Validators.validateConfig(value)
+    check(not normalized and err.code == 'INVALID_CONFIG', 'free-form NPC profile content must fail')
+end
 
 do
     local ok = NightShift.Server.bootstrap()
