@@ -1,0 +1,13 @@
+# Superpowers execution scratch (briefs, reports, review packages, ledger)
+.superpowers/sdd/
+
+# Local/runtime secrets and generated dependencies
+.env
+.env.*
+node_modules/
+vendor/
+
+# FiveM/server runtime output
+logs/
+*.log
+

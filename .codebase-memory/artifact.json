@@ -1,0 +1,11 @@
+{
+    "schema_version": 2,
+    "commit": "",
+    "indexed_at": "2026-08-28T13:25:02Z",
+    "project": "gnsh-nightshift",
+    "nodes": 2,
+    "edges": 1,
+    "original_size": 1179648,
+    "compressed_size": 1987,
+    "compression_level": 9
+}
