@@ -2,6 +2,8 @@ local root = (... and ... ~= '') and (...) or '.'
 local function load(path) dofile(root .. '/' .. path) end
 load('shared/enums.lua'); load('shared/errors.lua'); load('shared/constants.lua'); load('shared/schemas.lua'); load('shared/validators.lua'); load('config/providers.lua'); load('config/features.lua'); load('config/config.lua'); load('server/core/result.lua'); load('server/core/clock.lua'); load('server/core/logger.lua'); load('server/bootstrap.lua'); load('client/bootstrap.lua')
 load('tests/core_contracts.lua')
+load('server/core/event_bus.lua')
+load('tests/event_bus_contracts.lua')
 
 local function check(value, message) assert(value, message) end
 
