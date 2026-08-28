@@ -2,12 +2,15 @@ NightShift = NightShift or {}
 
 local readiness = NightShift.Enums.Readiness
 local defaultStages = {
-    config = function()
-        return {
-            ok = false,
-            code = 'INVALID_CONFIG',
-            message = 'NightShift configuration is required before boot'
-        }
+    config = function(context, bootstrap)
+        local options = bootstrap and bootstrap.options or {}
+        local source = (context and context.config) or options.config or NightShift.DefaultConfig
+        local normalized, err = NightShift.Validators.validateConfig(source, {
+            registry = options.providerRegistry,
+            resolveProvider = (context and context.resolveProvider) or options.resolveProvider
+        })
+        if not normalized then return err end
+        return { ok = true, config = normalized }
     end
 }
 for _, stage in ipairs(NightShift.Constants.STAGES) do
@@ -41,7 +44,8 @@ function Bootstrap.new(options)
         results = {},
         cleanup = {},
         cleanupComplete = false,
-        stages = {}
+        stages = {},
+        options = options
     }, Bootstrap)
     for _, stage in ipairs(NightShift.Constants.STAGES) do
         instance.stages[stage] = stageInitializers[stage] or defaultStages[stage]

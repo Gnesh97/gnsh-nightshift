@@ -1,6 +1,6 @@
 local root = (... and ... ~= '') and (...) or '.'
 local function load(path) dofile(root .. '/' .. path) end
-load('shared/enums.lua'); load('shared/errors.lua'); load('shared/constants.lua'); load('server/bootstrap.lua'); load('client/bootstrap.lua')
+load('shared/enums.lua'); load('shared/errors.lua'); load('shared/constants.lua'); load('shared/schemas.lua'); load('shared/validators.lua'); load('config/providers.lua'); load('config/features.lua'); load('config/config.lua'); load('server/bootstrap.lua'); load('client/bootstrap.lua')
 
 local function check(value, message) assert(value, message) end
 
@@ -56,4 +56,45 @@ end
 
 check(NightShift.Client.readiness == 'READY', 'client lifecycle should initialize ready')
 
-print('NS-010 tests passed: ordered boot, stage failure short-circuit, stop cleanup')
+local function validConfig(overrides)
+    local value = NightShift.Validators.copy(NightShift.DefaultConfig)
+    if overrides then for key, item in pairs(overrides) do value[key] = item end end
+    return value
+end
+
+do
+    local normalized, err = NightShift.Validators.validateConfig(validConfig({ provider = { mode = 'explicit', name = 'missing' } }))
+    check(not normalized and err.code == 'UNKNOWN_PROVIDER' and err.field == 'provider.name', 'unknown provider must fail with field')
+end
+do
+    local value = validConfig(); value.servicePackages[2] = NightShift.Validators.copy(value.servicePackages[1])
+    local normalized, err = NightShift.Validators.validateConfig(value)
+    check(not normalized and err.code == 'DUPLICATE_ID', 'duplicate service ID must fail')
+end
+do
+    local value = validConfig(); value.servicePackages[1].price = 0
+    local normalized, err = NightShift.Validators.validateConfig(value)
+    check(not normalized and err.code == 'INVALID_PRICE', 'invalid price must fail')
+end
+do
+    local value = validConfig(); value.servicePackages[1].locationIds = { 'not-allowlisted' }
+    local normalized, err = NightShift.Validators.validateConfig(value)
+    check(not normalized and err.code == 'INVALID_LOCATION_REFERENCE', 'invalid location reference must fail')
+end
+do
+    local value = validConfig(); value.features.physicalNpc = true
+    local normalized, err = NightShift.Validators.validateConfig(value)
+    check(normalized and not err and normalized ~= value and normalized.features.physicalNpc, 'valid config should normalize a copy')
+end
+do
+    local value = validConfig({ provider = { mode = 'auto' } })
+    local normalized, err = NightShift.Validators.validateConfig(value)
+    check(not normalized and err.code == 'PROVIDER_UNAVAILABLE', 'auto detection must not silently fall back')
+end
+
+do
+    local ok = NightShift.Server.bootstrap()
+    check(ok and NightShift.Server.readiness == 'READY', 'default development config should boot')
+end
+
+print('NS-010/NS-011 tests passed: lifecycle, config validation, normalization, and fail-closed provider selection')
