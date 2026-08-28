@@ -92,14 +92,15 @@ Settlement MUST happen exactly once and only on the canonical transition into `S
 3. The server-side settlement service owns the transition and uses one stable settlement key derived from the booking ID (not a per-retry or per-attempt key).
 4. The booking has not already entered `SETTLED` and has no terminal cancellation/expiry outcome.
 
+Before this transition, the settlement service may create or update a durable settlement record with status `PENDING` or `UNKNOWN` while the booking remains `COMPLETED`. Those statuses represent an in-flight or uncertain external operation, are non-terminal, and MUST be reconciled using the same stable booking key. They do not authorize the state transition.
+
 **Postconditions**
 
 1. The booking state changes to `SETTLED` once.
-2. A durable settlement record is created with status `PENDING`, `SUCCEEDED`, `UNKNOWN`, or `REVERSED`, keyed uniquely by booking ID and the stable settlement key. `PENDING`/`UNKNOWN` are non-terminal settlement-operation statuses and MUST NOT transition the Booking to `SETTLED`.
+2. The durable settlement record is `SUCCEEDED`, keyed uniquely by booking ID and the stable settlement key. `PENDING`, `UNKNOWN`, and `REVERSED` MUST NOT accompany or produce `SETTLED`.
 3. External payment/reward effects use the same stable key and a contract that guarantees idempotent replay or exposes an auditable query-by-key operation.
-4. `PENDING` or `UNKNOWN` is durably retained and reconciled by the settlement service; a retry never creates a new key or blindly repeats an uncertain external effect.
-5. Repeating the same request returns the existing settlement result and creates no additional effect. The only guard for `COMPLETED -> SETTLED` is confirmed external success for that stable key; pending/unknown outcomes remain in `COMPLETED` while reconciliation continues.
-4. Every other booking transition (creation, acceptance, reservation, occupation, completion, cancellation, expiry, recovery) performs zero settlement effects.
+4. Repeating the same request returns the existing settlement result and creates no additional effect. The only guard for `COMPLETED -> SETTLED` is confirmed external success for that stable key.
+5. Every other booking transition (creation, acceptance, reservation, occupation, completion, cancellation, expiry, recovery) performs zero settlement effects. `REVERSED` is a later settlement-record outcome reached only through the server-authorized reversal contract and does not reopen or alter the terminal Booking state.
 
 The repository MUST enforce uniqueness of settlement by booking ID and the stable settlement key. External adapters may report capability/results, but cannot authorize settlement. A partially failed or in-flight operation MUST remain `PENDING`/`UNKNOWN` until reconciliation. If a confirmed effect must be undone, only the server settlement service may invoke the defined reversal contract using a unique reversal key linked to the original stable settlement key; a reversal is auditable, idempotent, and never a second settlement.
 

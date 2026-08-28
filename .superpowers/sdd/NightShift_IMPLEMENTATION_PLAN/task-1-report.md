@@ -62,3 +62,20 @@ Write-Output 'PASS: closed session/reservation transitions, lease guard, determi
 ```
 
 Output: `PASS: closed session/reservation transitions, lease guard, deterministic expiry, and settlement guard validated`.
+
+## Final settlement contradiction fix
+
+Changed `docs/spec/DOMAIN_INVARIANTS.md` settlement preconditions/postconditions to make `PENDING`/`UNKNOWN` pre-transition reconciliation statuses while Booking remains `COMPLETED`; only confirmed external success with settlement record `SUCCEEDED` permits `COMPLETED -> SETTLED`. Removed `REVERSED` from SETTLED postconditions and defined it as a later reversal-record outcome.
+
+Validation command:
+
+```powershell
+$p = Get-Content -Raw docs/spec/DOMAIN_INVARIANTS.md
+if ($p -notmatch 'PENDING.*UNKNOWN.*booking remains `COMPLETED`') { throw 'Missing non-terminal reconciliation rule' }
+if ($p -notmatch 'durable settlement record is `SUCCEEDED`') { throw 'Missing SUCCEEDED settlement guard' }
+if ($p -notmatch 'PENDING.*UNKNOWN.*REVERSED.*MUST NOT accompany or produce `SETTLED`') { throw 'Forbidden settlement statuses can reach SETTLED' }
+if ($p -notmatch 'REVERSED.*later settlement-record outcome') { throw 'Missing later reversal path' }
+Write-Output 'PASS: pending/unknown remain COMPLETED; only SUCCEEDED reaches SETTLED; reversal is later-only'
+```
+
+Output: `PASS: pending/unknown remain COMPLETED; only SUCCEEDED reaches SETTLED; reversal is later-only`.
