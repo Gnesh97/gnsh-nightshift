@@ -46,36 +46,12 @@ Write-Output 'PASS: each invariant ID, all seven topics, participant pairs, sett
 
 Output: `PASS: each invariant ID, all seven topics, participant pairs, settlement, and authority validated`.
 
-## Scoped re-review fix append
+## Final lifecycle and recovery hardening
 
-Changed lines in `docs/spec/DOMAIN_INVARIANTS.md`: booking transition rows 61, 64-65; session lifecycle rows 69-83; settlement postconditions 96-100; reservation lifecycle and lease guard 177-195 (line numbers may shift with formatting). Added explicit guards and side effects for every session/reservation transition, deterministic server-clock lease expiry to `EXPIRED`/`RECOVERED`, and clarified that `PENDING`/`UNKNOWN` settlement is non-terminal while only confirmed stable-key success permits `COMPLETED -> SETTLED`. Added inbound booking-cancellation to session `CANCELLED`.
+The final S00 review restored the development plan's complete closed Booking enum and canonical path (`DRAFT`, `QUOTED`, `OFFERED`, `ACCEPTED`, `RESERVED`, `PREPARING`, `TRAVELLING`, `ARRIVED`, `ACTIVE`, `COMPLETED`, `SETTLED`) plus every required alternate state. Deterministic guards/effects, terminal versus holding semantics, NPC travel mapping, durable location `RELEASE_PENDING`/`QUARANTINED`, atomic or split-leg settlement, and separate cancellation-finance policy are now explicit.
 
-Covering validation command:
-
-```powershell
-$p = Get-Content -Raw docs/spec/DOMAIN_INVARIANTS.md
-foreach ($id in @('INV-001','INV-002','INV-003','INV-004','INV-005','INV-006','INV-007')) { if ($p -notmatch [regex]::Escape($id)) { throw "Missing $id" } }
-foreach ($topic in @('Worker Mode','player-player','Adult-themed','exactly once','Logical NPC profile','allowlist','Location reservation')) { if ($p -notmatch [regex]::Escape($topic)) { throw "Missing topic: $topic" } }
-foreach ($token in @('Session state enum is closed','Reservation state enum is','now >= lease_expires_at','COMPLETED -> SETTLED','PENDING`/`UNKNOWN` are non-terminal','RESERVED` | `RECOVERED','ACTIVE` | `CANCELLED')) { if ($p -notmatch [regex]::Escape($token)) { throw "Missing state contract: $token" } }
-if ($p -match 'Cancellation/expiry before activation') { throw 'Expiry must not be cancellation' }
-Write-Output 'PASS: closed session/reservation transitions, lease guard, deterministic expiry, and settlement guard validated'
-```
-
-Output: `PASS: closed session/reservation transitions, lease guard, deterministic expiry, and settlement guard validated`.
+Covering validation checks all 20 states, canonical order, the sole `COMPLETED -> SETTLED` authority, stable debit/credit/reversal keys, and `reassignable=false` until confirmed release/reconciliation. The full command and output are recorded in `final-fix-report.md`.
 
 ## Final settlement contradiction fix
 
-Changed `docs/spec/DOMAIN_INVARIANTS.md` settlement preconditions/postconditions to make `PENDING`/`UNKNOWN` pre-transition reconciliation statuses while Booking remains `COMPLETED`; only confirmed external success with settlement record `SUCCEEDED` permits `COMPLETED -> SETTLED`. Removed `REVERSED` from SETTLED postconditions and defined it as a later reversal-record outcome.
-
-Validation command:
-
-```powershell
-$p = Get-Content -Raw docs/spec/DOMAIN_INVARIANTS.md
-if ($p -notmatch 'PENDING.*UNKNOWN.*booking remains `COMPLETED`') { throw 'Missing non-terminal reconciliation rule' }
-if ($p -notmatch 'durable settlement record is `SUCCEEDED`') { throw 'Missing SUCCEEDED settlement guard' }
-if ($p -notmatch 'PENDING.*UNKNOWN.*REVERSED.*MUST NOT accompany or produce `SETTLED`') { throw 'Forbidden settlement statuses can reach SETTLED' }
-if ($p -notmatch 'REVERSED.*later settlement-record outcome') { throw 'Missing later reversal path' }
-Write-Output 'PASS: pending/unknown remain COMPLETED; only SUCCEEDED reaches SETTLED; reversal is later-only'
-```
-
-Output: `PASS: pending/unknown remain COMPLETED; only SUCCEEDED reaches SETTLED; reversal is later-only`.
+`PENDING`/`UNKNOWN` remain pre-transition reconciliation statuses while the Booking is `COMPLETED`; only confirmed atomic-transfer success or confirmed success of both durable debit/credit legs permits `COMPLETED -> SETTLED`. A successful debit followed by declined credit requires same-key idempotent reversal. An unknown credit is reconciled before reversal so compensation cannot mint or duplicate funds. Query-by-key is conditional when guaranteed same-key replay already returns the durable result.

@@ -26,7 +26,7 @@ Every adapter contract MUST return a normalized result (`supported`, `unavailabl
 | **Client** | Rendering, local interaction, and submitting requests; never authoritative economy, arrival, completion, consent, assignment, or location ownership. |
 | **Provider/runtime** | Physical effects such as UI delivery, entity presentation, world targeting, or dispatch transport. A runtime/network owner is not business authority. |
 
-## 1. Framework identity, lifecycle, job, and duty
+## 1. Framework identity, lifecycle, job, duty, and internal availability
 
 Framework integration is **Required** for framework mode. A standalone identity adapter is the supported fallback for development or servers without a framework. The core consumes `player.identity`, `player.lifecycle`, `player.job`, and `player.duty` capability behavior, not an integration label.
 
@@ -36,10 +36,11 @@ Framework integration is **Required** for framework mode. A standalone identity 
 | `framework.lifecycle` | Adapter reports loaded, unloaded, reconnect, and resource-reconnect events, keyed by stable identity; duplicate events are idempotent. | Required | Server/core | Poll/reconcile from server state on a bounded scheduler. Until reconciled, pause new authoritative actions and recover transient bookings/reservations by lease. |
 | `framework.job` | Adapter returns normalized job name/grade and an immutable observation timestamp. Unknown/malformed values are unavailable, not trusted. | Conditional | Server/core | Treat job as unavailable; deny only features whose configured eligibility requires it, without inventing a job. |
 | `framework.duty` | Adapter returns a current, server-observed normalized on-duty/available state (`available=true/false`), health, and timestamp, or explicitly reports unsupported. A stale, unhealthy, or missing observation is unavailable and MUST NOT be treated as available. | Conditional | Server/core | Use an internal server-owned availability toggle only if configured and healthy; otherwise worker assignment/acceptance requiring duty is unavailable. |
+| `internal_availability` | Server repository returns `{ supported, healthy, available, observed_at, version, source="SERVER_TOGGLE" }` for the stable player/character identity. `fresh=true` is derived only when `server_now - observed_at <= configured_max_age` and the current persisted version is observed. Clients may request a toggle, but only an authorized server write changes it. | Conditional fallback when framework duty is unsupported/unhealthy/stale | Server/core + repository | Treat the worker as unavailable. Do not infer availability from job presence, login state, a client toggle, or the last healthy observation. |
 | `framework.events` | Adapter can subscribe to lifecycle, job-change, and duty-change events, with unsubscribe/restart safety. | Optional | Server adapter | Bounded reconciliation polling. Never let missed callbacks authorize a transition. |
 | `framework.authorize` | Adapter can verify that a server source still maps to the resolved stable identity before a write. | Required | Server/core | Reject the write; do not rely on a stale source or client claim. |
 
-Framework-specific normalization belongs only in the adapter. A core rule is therefore expressible as: “if `framework.identity` and `framework.lifecycle` are healthy, and the current `framework.duty` observation is healthy with `available=true` (or a configured healthy internal availability contract says so), permit the configured worker action.” Capability presence alone never means that a player is currently on duty.
+Framework-specific normalization belongs only in the adapter. A core rule is therefore expressible as: “if `framework.identity` and `framework.lifecycle` are healthy, and either the current framework-duty observation or the current internal-availability observation is healthy, fresh, and `available=true`, permit the configured worker action.” Capability presence or an old `true` value never means that a player is currently available.
 
 ## 2. Money, accounts, holds, deposits, refunds, and settlement
 
@@ -48,16 +49,21 @@ Money is **Required** for paid production flows and **Conditional** for any conf
 | Capability | Detection and normalized contract | Status | Authority | Safe fallback when unavailable |
 | --- | --- | --- | --- | --- |
 | `money.balance` | Server can query an allowlisted account and return a non-negative integer minor-unit balance. | Required for paid flow | Server/core requests; adapter observes | Mark paid booking unavailable; optionally allow an explicitly configured no-pay development mode that performs zero money effects and is clearly labeled. |
-| `money.debit` / `money.credit` | Server adapter can debit/credit an allowlisted account with a stable operation key and returns `SUCCEEDED`, `DECLINED`, or `UNKNOWN`. | Required for paid settlement | Server settlement service | Keep booking non-settled and record `PENDING`/`UNKNOWN`; reconcile by the same key. Never substitute a client-side transfer or mark success locally. |
+| `money.transfer.atomic` | Adapter performs payer debit plus recipient credit as one all-or-nothing operation using `settlement:{booking_id}:transfer`; same-key replay returns the same durable result without another effect. Result is `SUCCEEDED`, `DECLINED`, or reconcilable `UNKNOWN`. | Conditional alternative for paid settlement | Server settlement service | Use the durable split-leg protocol only when all of its capabilities are present; otherwise disable paid settlement. Never emulate atomicity with unrecorded sequential calls. |
+| `money.debit` / `money.credit` | Adapter accepts distinct stable per-leg keys and payload fingerprints and returns `SUCCEEDED`, `DECLINED`, or `UNKNOWN`. Credit cannot be invoked until the durable debit leg is `SUCCEEDED`. | Conditional alternative; required together for split-leg settlement | Server settlement service | Use `money.transfer.atomic`; otherwise disable paid settlement. Any partial/unknown result remains durable and non-settled. |
+| `money.reversal` | Adapter can idempotently compensate a confirmed debit with `settlement:{booking_id}:debit:reverse`, linked to the original debit key, and returns `REVERSED`, `DECLINED`, or `UNKNOWN`. | Conditional; required for split-leg settlement | Server settlement service | Split-leg settlement is unavailable. Never leave a protocol enabled that can debit successfully but cannot compensate a declined/absent credit. |
+| `money.idempotency` | Transfer, debit, credit, reversal, hold, capture, release, and refund operations accept their stable key plus payload fingerprint and guarantee no duplicate effect. | Required for every economic effect | Server settlement/deposit services | Disable the affected economic flow. A retry may never use a new key. |
+| `money.idempotent_replay` | Same-key replay returns the durable/canonical operation status and never creates a new effect; it can resolve timeout/restart uncertainty without a separate query endpoint. | Optional alternative to query-by-key | Server adapter observes; server service reconciles | Require `money.settlement.query` for any operation that can return `UNKNOWN`; otherwise disable that payment mode. |
+| `money.settlement.query` | Adapter can query an atomic transfer or individual debit/credit/reversal by its stable key after timeout/restart. | Conditional: required only when `UNKNOWN` cannot be resolved by guaranteed idempotent replay; optional for atomic/replay-safe providers | Server adapter observes; server settlement service reconciles | Keep durable status `UNKNOWN` and the Booking non-settled. Do not start a new key, assume failure, or compensate while a credit may have succeeded. |
 | `money.hold` | Adapter can place a temporary hold with `hold_key`, amount, expiry, configured account, and query-by-key. A hold is not a completed debit. | Conditional (deposit) | Server deposit service | Do not accept a deposit-requiring booking; no partial local reservation or implied charge. |
 | `money.deposit.capture` | Adapter can capture an existing hold exactly once by the same stable booking/deposit key and configured account, and report an auditable result. | Conditional (deposit) | Server settlement service | Keep deposit `HELD`/`UNKNOWN`, block `SETTLED`, and reconcile; never capture through a new retry key. |
 | `money.deposit.release` | Adapter can release an existing hold exactly once, keyed to the original hold and configured account, and report the result. | Conditional (deposit) | Server cancellation/recovery service | Keep `HELD`/`UNKNOWN` and retry/reconcile using the same key; do not claim funds were released. |
-| `money.refund` | Adapter supports a refund/reversal operation linked to the original stable settlement key and a unique refund key; replay returns the existing result. | Conditional (refund feature) | Server settlement service | Record refund as unavailable/pending and retain the original audit trail; never silently mint funds or reopen the terminal Booking. |
-| `money.settlement.query` | Adapter can query the external operation by stable key after timeout/restart. | Required when debit/credit can return `UNKNOWN` | Server settlement service | Keep durable status `UNKNOWN`; do not transition `COMPLETED -> SETTLED` until success is confirmed. |
+| `money.refund` | Adapter supports an idempotent refund linked to the original settlement, debit, prepayment, or hold key and a unique server-derived refund key; it accepts only the server-calculated amount and replays the existing result. | Conditional (configured cancellation/refund feature) | Server cancellation-finance or settlement service | Record the eligible refund as unavailable/`PENDING`/`UNKNOWN` and retain the original audit trail. Never silently mint funds, accept a client amount, or reopen the terminal Booking. |
 | `money.accounts` | Adapter exposes only configured account kinds; account identifiers are mapped to opaque normalized keys. | Required for any account effect | Server/config | Reject unsupported account configuration at startup; never accept arbitrary account names from clients. |
-| `money.idempotency` | Every hold, capture, release, debit, credit, and refund accepts a stable key and guarantees replay without duplicate effect, or provides query-by-key. | Required for any economic effect | Server settlement/deposit services | Disable the affected paid flow. A timeout is `UNKNOWN`, not success or permission to retry with a new key. |
 
-The stable key is derived from the booking ID and operation kind (for example, deposit hold, capture, release, settlement, or refund). It is not generated per request or retry. Repeating a command returns the durable operation result with no second effect. Provider adapters cannot authorize the canonical `SETTLED` transition; only the server settlement service may do so after confirmed success.
+The server freezes exactly one settlement mode before calling the adapter. Atomic mode reaches `SETTLED` only after the one transfer is confirmed `SUCCEEDED`. Split-leg mode durably creates `settlement:{booking_id}:debit` and `settlement:{booking_id}:credit`, runs debit first, and reaches `SETTLED` only when both are confirmed `SUCCEEDED`. If debit succeeds but credit is declined, the stable reversal is mandatory. If credit is `UNKNOWN`, the service records compensation required but first resolves the credit by query or same-key replay; reversing while the credit may have succeeded is forbidden. Settlement stays `PENDING`/`UNKNOWN` until both legs and any required reversal are safely resolved, so retry/restart cannot duplicate funds or leave a silent partial transfer.
+
+Cancellation itself never calls these capabilities. After the terminal Booking transition commits, the server-owned cancellation-finance policy may separately release/refund an eligible held deposit or prepayment according to the frozen, configuration-driven state/timing schedule. All amounts and keys are server-derived.
 
 ## 3. Phone app and notification delivery
 
@@ -80,8 +86,9 @@ All location integrations implement the neutral location contract used by `INV-0
 | --- | --- | --- | --- | --- |
 | `location.resolve` | Server resolves an allowlisted logical location ID to bounded category, eligibility, and a provider-neutral world target reference. Client coordinates are never accepted as identity. | Required for any location flow | Server reservation service | Use configured locations if available; otherwise the location-dependent flow is unavailable. |
 | `location.reserve` | Server adapter can observe whether a location is usable; ownership remains a server reservation record bound to one Booking, with lease/version. | Required for activation at a location | Server/core | Reject or defer reservation; never let an adapter or client directly assign a room/spot. |
-| `location.occupy` | Adapter reports usable physical target for the owning reservation; server atomically transitions `RESERVED -> OCCUPIED`. | Required for physical activation | Server reservation service | Keep reservation `RESERVED` and retry/reconcile; on lease expiry recover it. |
-| `location.release` / `location.recover` | Adapter can clean up its external allocation; server lifecycle service transitions to `RELEASED` or `RECOVERED` idempotently. | Required for externally allocated locations | Server/core | If cleanup is unavailable, server lease/reconciliation clears active ownership only into a quarantined/non-reassignable state while recording cleanup failure for retry; it does not make the allocation available. |
+| `location.occupy` | Adapter reports a healthy, fresh, usable physical target for the owning reservation; server atomically transitions `RESERVED -> OCCUPIED`. | Required for physical activation | Server reservation service | Keep reservation `RESERVED` and retry/reconcile; expiry starts release but does not prove an external allocation reusable. |
+| `location.release` | Adapter cleans up the external allocation with a stable release key and returns `SUCCEEDED`, `DECLINED`, or `UNKNOWN`; the server first moves the reservation to `RELEASE_PENDING`. | Required for externally allocated locations | Server lifecycle service owns state; adapter reports result | On anything except confirmed success, persist `QUARANTINED`, retain the owner lock, set `reassignable=false`, and retry/reconcile by the same key. |
+| `location.reconcile` | Adapter queries the canonical external allocation correlation and returns `ACTIVE`, `ABSENT`, or `UNKNOWN` with freshness/version evidence. `ABSENT` is authoritative proof for release; a missing callback is not. | Conditional when release can be uncertain or provider restarts with allocations | Server lifecycle service | Keep `QUARANTINED` indefinitely or require an audited server-operator reconciliation supported by authoritative provider evidence. Never clear the lock merely because a lease expired. |
 | `location.configured` | Static config provides validated logical locations, capacity/eligibility, and safe world target metadata. | Required fallback; Conditional baseline | Server/config | Hide location-dependent modes if no valid configured locations exist. Never fall back to arbitrary coordinates. |
 | `location.housing` | Adapter maps a logical location to an authorized housing/property target and reports availability without granting ownership. | Optional | Server reservation service | Use `location.configured`; if none, hide housing-dependent choices. |
 | `location.motel` | Adapter maps a logical location to a motel/hotel room allocation and supports lease/release or authoritative failure reporting. | Optional | Server reservation service | Use configured non-motel locations; never emulate an unverified room allocation. |
@@ -89,7 +96,7 @@ All location integrations implement the neutral location contract used by `INV-0
 | `location.vehicle` | Adapter resolves an allowlisted vehicle interaction/target and reports usable state; it does not define participant identity or booking ownership. | Optional | Server reservation service | Use a non-vehicle configured location; if the package requires vehicle use, make it unavailable. |
 | `location.world_target` | Adapter resolves a current physical target from a logical location and reports generation/freshness. | Optional for non-physical flows | Server adapter observes; server owns logical state | Present the logical location and require an alternate configured target; never trust a stale handle or client-only coordinate. |
 
-Provider outage, restart, or stale target ends only the external association. It does not delete the logical location, Booking, NPC profile, or reservation record. A reservation is released/recovered only through the server lifecycle service, with owner/version/lease checks. If external cleanup is unavailable, the server MUST quarantine the location allocation (or retain a non-overlapping lease) and block reassignment until release succeeds or an authoritative reconciliation proves the allocation is gone. Clearing the local owner alone MUST NOT make a motel, venue, vehicle, or housing allocation reusable.
+Provider outage, restart, or stale target ends only the external association. It does not delete the logical location, Booking, NPC profile, or reservation record. The server lifecycle service is the sole reservation-state owner: completion/cancellation or lease expiry requests `RELEASE_PENDING`; confirmed release or authoritative `ABSENT` reconciliation permits `RELEASED`; every uncertain result persists `QUARANTINED` with `reassignable=false`. Lease expiry, clearing a local owner, deleting a row, or waiting out a TTL MUST NOT make a motel, venue, vehicle, or housing allocation reusable.
 
 ## 5. Dispatch and safety
 
@@ -156,9 +163,12 @@ The registry exposes capability presence and contract version/health, for exampl
 ```text
 capabilities = {
   framework = { identity = true, lifecycle = { healthy = true }, job = false,
-    duty = { healthy = true, available = true } },
-  money = { accounts = true, balance = true, debit = true, credit = true,
-    settlement = { query = true }, hold = false, refund = true, idempotency = true },
+    duty = { healthy = false, fresh = false, available = false } },
+  internal_availability = { supported = true, healthy = true, fresh = true,
+    available = true, observed_at = "server-utc", version = 12, source = "SERVER_TOGGLE" },
+  money = { accounts = true, balance = true, transfer = { atomic = false },
+    debit = true, credit = true, reversal = true, idempotency = true,
+    idempotent_replay = true, settlement = { query = false }, hold = false, refund = true },
   phone = { app_register = false, notification_push = false },
   location = { resolve = true, reserve = true, configured = true, motel = false },
   safety = { incident_audit = true, alert = false },
@@ -171,10 +181,14 @@ capabilities = {
 This is illustrative vocabulary, not a provider selection API. A core decision is written as a contract predicate, such as:
 
 ```text
-allow_paid_settlement := money.accounts && money.debit && money.credit && money.settlement.query && money.idempotency
+allow_atomic_paid_settlement := money.accounts && money.balance && money.transfer.atomic && money.idempotency
+allow_split_leg_paid_settlement := money.accounts && money.balance && money.debit && money.credit && money.reversal && money.idempotency && (money.settlement.query || money.idempotent_replay)
+allow_paid_settlement := allow_atomic_paid_settlement || allow_split_leg_paid_settlement
 allow_deposit_booking := money.accounts && money.hold && money.deposit.capture && money.deposit.release && money.idempotency
 allow_location_activation := location.resolve && location.reserve && location.occupy
-allow_worker_action := framework.identity && framework.lifecycle.healthy && ((framework.duty.healthy && framework.duty.available) || (internal_availability.healthy && internal_availability.available))
+framework_duty_current := framework.duty.healthy && framework.duty.fresh && framework.duty.available
+internal_availability_current := internal_availability.supported && internal_availability.healthy && internal_availability.fresh && internal_availability.available
+allow_worker_action := framework.identity && framework.lifecycle.healthy && (framework_duty_current || internal_availability_current)
 ```
 
 The implementation MUST evaluate capability behavior and configured policy, not provider names. Missing capabilities produce one of three deterministic outcomes: (1) use the documented equivalent fallback, (2) hide/disable the affected optional feature, or (3) fail closed with a typed unavailable error before any side effect. It MUST NOT silently switch accounts, invent a location, bypass consent, settle locally, or broaden participant eligibility.
@@ -191,7 +205,10 @@ The implementation MUST evaluate capability behavior and configured policy, not 
 
 - [ ] All eight capability areas are represented: framework; money; phone; housing/motel/venue/vehicle/configured locations; dispatch/safety; appearance/NPC; target; notification.
 - [ ] Every capability row states detection/contract semantics, status, authority, and deterministic fallback.
-- [ ] Holds/deposits, refund, settlement, and stable-key idempotency are explicit.
+- [ ] Internal availability is server-owned and requires a healthy, fresh observation plus the current `available=true` toggle.
+- [ ] Atomic transfer and durable split-leg settlement have stable keys, partial-failure compensation, and conditional query/replay reconciliation.
+- [ ] Holds/deposits and configuration-driven cancellation refunds/releases are explicit and idempotent.
+- [ ] Uncertain external location cleanup remains durably `QUARANTINED`, `reassignable=false`, until authoritative release/reconciliation.
 - [ ] Required/optional/conditional behavior fails closed where no safe fallback exists.
 - [ ] Core examples use capability predicates and contain no provider-name checks.
 - [ ] Provider calls (including appearance, logging, and evidence integrations) are confined to adapter boundaries; server remains authoritative.

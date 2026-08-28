@@ -14,7 +14,7 @@ This document defines the v1 domain rules for bookings, participants, settlement
 - **Session**: the bounded, consent-gated interaction represented by the booking. The domain records only abstract package/session data and states; it does not model or store explicit content.
 - **Logical NPC profile**: persistent domain data describing an NPC (identity, configuration, availability, and history). It exists independently of any spawned game entity.
 - **Physical ped entity**: the runtime game-world ped instance associated with an NPC profile for a period of time. It has a runtime/network identity and can despawn, be replaced, or become invalid without deleting the profile.
-- **Reservation lifecycle**: the server-owned sequence for a location reservation: `RESERVED` (exclusive hold), `OCCUPIED` (active use), then `RELEASED` or `RECOVERED` (terminal availability restoration). A failed or abandoned hold may transition to `RECOVERED` through the same lifecycle service.
+- **Reservation lifecycle**: the server-owned sequence for a location reservation: `RESERVED` (exclusive hold), `OCCUPIED` (active use), `RELEASE_PENDING` (cleanup requested), optionally `QUARANTINED` (cleanup uncertain and `reassignable=false`), then `RELEASED` (the only reusable terminal state).
 - **Canonical settlement transition**: the one domain transition into booking state `SETTLED`. No other state or event is a settlement authority.
 
 ## Booking lifecycle and common entity
@@ -49,22 +49,55 @@ Player-to-player booking is outside the v1 core. It MUST NOT be represented as a
 
 ### Closed state machines
 
-The v1 Booking state enum is closed: `REQUESTED`, `ACCEPTED`, `RESERVED`, `ACTIVE`, `COMPLETED`, `SETTLED`, `CANCELLED`, and `EXPIRED`. `SETTLED`, `CANCELLED`, and `EXPIRED` are terminal. The only allowed booking transitions are:
+The v1 Booking state enum is closed and exactly matches the product lifecycle:
+
+```text
+DRAFT, QUOTED, OFFERED, ACCEPTED, RESERVED, PREPARING, TRAVELLING,
+ARRIVED, ACTIVE, COMPLETED, SETTLED, DECLINED, CANCELLED,
+CLIENT_NO_SHOW, WORKER_NO_SHOW, EXPIRED, INTERRUPTED, DISPUTED,
+FAILED, RECOVERY_REQUIRED
+```
+
+The canonical success path is deterministic:
 
 | From | To | Guard | Domain side effect |
 | --- | --- | --- | --- |
-| `REQUESTED` | `ACCEPTED` | Allowlisted participants and package accepted | Freeze assignment/package terms |
-| `REQUESTED` | `CANCELLED` | Server-authorized cancellation before acceptance | No settlement; begin reservation cleanup if needed |
-| `ACCEPTED` | `RESERVED` | Reservation service atomically owns a location | Bind the active reservation to this booking |
-| `ACCEPTED` | `CANCELLED` | Server-authorized cancellation before activation | No settlement; release/recover reservation if present |
-| `RESERVED` | `ACTIVE` | Reservation is occupied and session consent is `CONSENTED` | Start the abstract session |
-| `RESERVED` | `CANCELLED` | Server-authorized cancellation before activation (not lease expiry) | No settlement; release reservation |
-| `ACTIVE` | `COMPLETED` | Session package terms complete and consent remains valid | Stop session; begin reservation release |
-| `ACTIVE` | `CANCELLED` | Consent withdrawn, failure, or authorized cancellation | No settlement; release/recover reservation |
-| `COMPLETED` | `SETTLED` | Settlement contract confirms success for the stable booking key | Commit exactly one settlement outcome |
-| `REQUESTED`/`ACCEPTED`/`RESERVED` | `EXPIRED` | Server clock reaches the state-specific request/reservation lease; this is never cancellation | No settlement; recover reservation if present |
+| `DRAFT` | `QUOTED` | Participants, abstract package, meeting mode, and requested typed location class are allowlisted; server pricing inputs are valid | Persist a server-authored, expiring quote and its line-item snapshot; no assignment or money effect |
+| `QUOTED` | `OFFERED` | Quote belongs to this booking/actor, is current, and the server-selected recipient is eligible | Persist the bounded offer and offer expiry; no assignment or money effect |
+| `OFFERED` | `ACCEPTED` | The authorized recipient accepts the current offer before expiry | Freeze normalized participants, assignment, package, meeting mode, agreed price, commission/deposit policy snapshots, and schedule |
+| `ACCEPTED` | `RESERVED` | The reservation coordinator atomically owns every required worker/location/deposit hold for this booking, or rolls all acquisitions back | Bind stable reservation/hold references to the booking |
+| `RESERVED` | `PREPARING` | Server clock reaches the preparation window and all required reservations remain owned, healthy, and current | Start server-owned preparation; no travel or settlement claim |
+| `PREPARING` | `TRAVELLING` | A server travel plan is persisted and the required participant/location reservations remain valid | Start logical travel and its bounded ETA/audit timeline |
+| `TRAVELLING` | `ARRIVED` | The server validates the meeting-mode-specific arrival barrier from canonical travel state and fresh normalized observations | Record attributable arrival timestamps; no session or settlement effect |
+| `ARRIVED` | `ACTIVE` | Required parties satisfy the mode-specific arrival barrier, the location reservation is `OCCUPIED`, and Session is `CONSENTED` | Start the abstract session under server clock |
+| `ACTIVE` | `COMPLETED` | Session is `COMPLETED`, package terms are satisfied, and consent remained current through completion | Freeze completion evidence and request independent resource-release workflows |
+| `COMPLETED` | `SETTLED` | INV-003 confirms the atomic transfer, or both durable payment legs, succeeded for their stable keys | Commit the sole canonical settlement outcome |
 
-No other booking transition is valid. A terminal booking cannot be edited, reactivated, or transitioned again; duplicate commands return the existing terminal result without side effects. `EXPIRED` is distinct from `CANCELLED` for auditability, but both are non-settling terminal outcomes.
+Booking travel state maps to the separate NPC travel aggregate without replacing it: Booking `PREPARING` maps to NPC travel `PREPARING`, Booking `TRAVELLING` maps to NPC travel `EN_ROUTE`, Booking `ARRIVED` requires NPC travel `ARRIVED` where an NPC travels, and Booking `ACTIVE` maps to NPC travel `BOOKED`. NPC `DELAYED`, `RETURNING`, entity generation, and physical spawn/despawn remain travel/entity substates and never create additional Booking states or authority.
+
+Alternate transitions are also closed:
+
+| From | To | Guard | Domain side effect |
+| --- | --- | --- | --- |
+| `OFFERED` | `DECLINED` | The authorized recipient declines the current offer | Record reason; release any provisional, non-financial match claim |
+| `DRAFT`/`QUOTED`/`OFFERED`/`ACCEPTED`/`RESERVED` | `EXPIRED` | The server clock reaches the persisted state-specific expiry before the next canonical transition | Record expiry; request resource release and eligible deposit-release policy separately |
+| `DRAFT`/`QUOTED`/`OFFERED`/`ACCEPTED`/`RESERVED`/`PREPARING`/`TRAVELLING`/`ARRIVED` | `CANCELLED` | A server-authorized cancellation request passes actor, state, version, and policy checks | Record cancellation facts only; after commit, request resource cleanup and the independent cancellation-finance policy |
+| `PREPARING`/`TRAVELLING`/`ARRIVED` | `CLIENT_NO_SHOW` | Server grace deadline passed and validated observations prove the client failed the required arrival barrier | Record no-show; request cleanup, reputation, and cancellation-finance policy independently |
+| `PREPARING`/`TRAVELLING`/`ARRIVED` | `WORKER_NO_SHOW` | Server grace deadline passed and validated observations prove the worker failed the required arrival barrier | Record no-show; request cleanup, reliability, and cancellation-finance policy independently |
+| `PREPARING`/`TRAVELLING`/`ARRIVED`/`ACTIVE` | `INTERRUPTED` | Consent is withdrawn, safety/provider/entity/location failure occurs, or a server-authorized pause is required | Stop progression immediately, persist cause and resumption deadline, and retain/quarantine resources as policy requires |
+| `INTERRUPTED` | `ACTIVE` | Interruption is resolved before deadline; arrival/location/session guards are revalidated and consent is freshly attributable | Resume the same frozen booking/session without changing price or assignment |
+| `INTERRUPTED` | `COMPLETED` | Durable session evidence proves completion occurred before the interruption was observed | Persist the already-proven completion; do not synthesize completion from the interruption |
+| `INTERRUPTED` | `CANCELLED` | Resumption is declined/forbidden or an authorized cancellation is confirmed after the Session is stopped | Record cancellation facts; request cleanup and cancellation-finance policy independently |
+| `ARRIVED`/`INTERRUPTED`/`COMPLETED` | `DISPUTED` | A server-authorized dispute suspends activation, completion acceptance, or settlement | Freeze disputed evidence and prohibit settlement while review is open |
+| `DISPUTED` | `ACTIVE`/`COMPLETED`/`CANCELLED`/`FAILED` | An authorized, audited resolution selects exactly one target and all target guards are revalidated | Apply the recorded resolution; financial/resource policy remains independent and idempotent |
+| Any non-terminal state except `RECOVERY_REQUIRED` | `RECOVERY_REQUIRED` | Restart/provider loss leaves a canonical prerequisite uncertain and normal progression cannot safely continue | Persist the prior state as `recovery_target_state`, block progression, settlement, and reassignment, and schedule reconciliation |
+| `RECOVERY_REQUIRED` | recorded `recovery_target_state` | Authoritative reconciliation proves the stored target safe, its ordinary entry guards pass, and optimistic version matches | Restore only that recorded state; never skip ahead or infer success from absence |
+| `RECOVERY_REQUIRED` | `FAILED` | Authoritative reconciliation proves recovery impossible and every external economic effect is resolved or safely compensated | Record unrecoverable failure and keep any uncertain allocation quarantined |
+| Any non-terminal state except `ACTIVE`/`RECOVERY_REQUIRED` | `FAILED` | The server proves an unrecoverable failure, all economic outcomes are known/compensated, and no safer specific outcome applies | Record failure; request independent cleanup with quarantine on uncertainty |
+
+`SETTLED` is the successful terminal state. `DECLINED`, `CANCELLED`, `CLIENT_NO_SHOW`, `WORKER_NO_SHOW`, `EXPIRED`, and `FAILED` are non-settling terminal Booking outcomes. `INTERRUPTED`, `DISPUTED`, `RECOVERY_REQUIRED`, and `COMPLETED` are non-terminal holding states with only the exits above. `ACTIVE` must enter `INTERRUPTED` before a failure, cancellation, or dispute is classified so the session is stopped first.
+
+No other transition is valid. A terminal Booking cannot be edited, reactivated, or transitioned again; duplicate commands return the existing result without repeating effects. A terminal Booking may still have a separate refund, deposit release, location release, reversal, or audit record in `PENDING`/`UNKNOWN`/`QUARANTINED`; those child workflows never reopen or rewrite the Booking outcome.
 
 The v1 Session state enum is closed: `PROPOSED`, `CONSENT_PENDING`, `CONSENTED`, `ACTIVE`, `COMPLETED`, `DECLINED`, `WITHDRAWN`, and `CANCELLED`. The only valid transitions are:
 
@@ -73,42 +106,54 @@ The v1 Session state enum is closed: `PROPOSED`, `CONSENT_PENDING`, `CONSENTED`,
 | `PROPOSED` | `CONSENT_PENDING` | Abstract package is valid and offered | Record consent request; no settlement |
 | `CONSENT_PENDING` | `CONSENTED` | Both required participants explicitly consent before consent lease expires | Record attributable consent timestamps |
 | `CONSENT_PENDING` | `DECLINED` | A required participant declines or consent lease expires | Block activation/settlement |
-| `CONSENTED` | `ACTIVE` | Owning booking enters `ACTIVE` and consent remains current | Start abstract session |
+| `CONSENTED` | `ACTIVE` | Owning booking passes `ARRIVED -> ACTIVE` and consent remains current | Start abstract session |
 | `CONSENTED` | `WITHDRAWN` | Consent is withdrawn before activation | Block activation/settlement |
 | `ACTIVE` | `COMPLETED` | Package terms complete while consent remains current | Record completion; permit booking completion |
 | `ACTIVE` | `WITHDRAWN` | Consent is withdrawn during session | Stop session; block settlement |
-| `PROPOSED`/`CONSENT_PENDING`/`CONSENTED`/`ACTIVE` | `CANCELLED` | Owning booking is server-cancelled | Stop/block session and release/recover reservation |
+| `PROPOSED`/`CONSENT_PENDING`/`CONSENTED`/`ACTIVE` | `CANCELLED` | Owning booking reaches a non-settling terminal outcome, or enters `INTERRUPTED` and cannot continue | Stop/block session and request the reservation release workflow |
 
-`DECLINED`, `WITHDRAWN`, `COMPLETED`, and `CANCELLED` are terminal. No other session transition is valid. Booking activation requires session `CONSENTED`; settlement requires booking `COMPLETED` and session `COMPLETED`.
+`DECLINED`, `WITHDRAWN`, `COMPLETED`, and `CANCELLED` are terminal. No other Session transition is valid. Booking `ARRIVED -> ACTIVE` requires Session `CONSENTED`; settlement requires Booking `COMPLETED` and Session `COMPLETED`.
 
 ### INV-003 — Exactly-once canonical settlement
 
 Settlement MUST happen exactly once and only on the canonical transition into `SETTLED`.
 
-**Preconditions for `... -> SETTLED`**
+**Preconditions for `COMPLETED -> SETTLED`**
 
 1. The booking is exactly in `COMPLETED`; `COMPLETED -> SETTLED` is the sole settlement transition.
 2. The session has satisfied its abstract package requirements and consent boundary.
-3. The server-side settlement service owns the transition and uses one stable settlement key derived from the booking ID (not a per-retry or per-attempt key).
+3. The server-side settlement service owns the transition and durably freezes one payment mode: an idempotent atomic transfer, or the split-leg protocol below.
 4. The booking has not already entered `SETTLED` and has no terminal cancellation/expiry outcome.
 
-Before this transition, the settlement service may create or update a durable settlement record with status `PENDING` or `UNKNOWN` while the booking remains `COMPLETED`. Those statuses represent an in-flight or uncertain external operation, are non-terminal, and MUST be reconciled using the same stable booking key. They do not authorize the state transition.
+Before any external call, the repository MUST commit a unique settlement intent keyed by `settlement:{booking_id}` and its frozen amount, accounts, participants, and payment mode. While an operation is in flight, declined with compensation outstanding, or externally uncertain, the settlement record remains `PENDING` or `UNKNOWN` and the Booking remains `COMPLETED`. Those statuses never authorize `SETTLED`.
+
+**Allowed payment protocols**
+
+1. **Atomic transfer:** invoke one adapter operation with stable key `settlement:{booking_id}:transfer`. The adapter contract guarantees all-or-nothing debit plus credit and idempotent replay of the same operation/result. Only confirmed `SUCCEEDED` authorizes `SETTLED`; `DECLINED` has zero money effect, and `UNKNOWN` is reconciled with the same key.
+2. **Durable split legs:** create both leg records before executing either call. The payer debit key is `settlement:{booking_id}:debit`; the recipient credit key is `settlement:{booking_id}:credit`; a possible debit compensation key is `settlement:{booking_id}:debit:reverse`. Each leg has a closed status: `NOT_STARTED`, `PENDING`, `SUCCEEDED`, `DECLINED`, or `UNKNOWN`; the compensation additionally permits `REVERSAL_PENDING`, `REVERSED`, and `REVERSAL_UNKNOWN`. Repository uniqueness is enforced per booking, leg kind, and stable key.
+3. In split-leg mode, debit executes first. Credit may execute only after debit is durably `SUCCEEDED`. A retry always uses the same leg key and payload fingerprint.
+4. If debit is `DECLINED`, credit remains `NOT_STARTED`; the settlement safely becomes failed with zero transfer. If debit is `UNKNOWN`, no credit starts until query-by-key or guaranteed same-key replay resolves the debit.
+5. If debit is `SUCCEEDED` and credit is `DECLINED`, the service MUST start idempotent compensation with the stable reversal key. The settlement remains `PENDING` until reversal is `REVERSED`; it may then become a safely compensated failure but never `SETTLED`.
+6. If debit is `SUCCEEDED` and credit is `UNKNOWN`, the service records compensation as required but MUST first resolve the credit with query-by-key or guaranteed same-key replay. It MUST NOT blindly reverse a debit while the credit may have succeeded. If the credit is authoritatively absent/declined, execute the stable reversal; if it succeeded, do not reverse. Until the credit and any required reversal are both safely resolved, the settlement stays `UNKNOWN` and cannot produce `SETTLED`, terminal failure, a new attempt key, or reputation effects.
+7. Provider restart, timeout, and process restart resume from the durable intent and per-leg rows. They never reconstruct progress from a client acknowledgement or start a replacement settlement.
 
 **Postconditions**
 
 1. The booking state changes to `SETTLED` once.
-2. The durable settlement record is `SUCCEEDED`, keyed uniquely by booking ID and the stable settlement key. `PENDING`, `UNKNOWN`, and `REVERSED` MUST NOT accompany or produce `SETTLED`.
-3. External payment/reward effects use the same stable key and a contract that guarantees idempotent replay or exposes an auditable query-by-key operation.
-4. Repeating the same request returns the existing settlement result and creates no additional effect. The only guard for `COMPLETED -> SETTLED` is confirmed external success for that stable key.
-5. Every other booking transition (creation, acceptance, reservation, occupation, completion, cancellation, expiry, recovery) performs zero settlement effects. `REVERSED` is a later settlement-record outcome reached only through the server-authorized reversal contract and does not reopen or alter the terminal Booking state.
+2. The durable settlement record is `SUCCEEDED`, keyed uniquely by Booking ID and `settlement:{booking_id}`. For atomic mode, the transfer is confirmed `SUCCEEDED`; for split-leg mode, both debit and credit are durably `SUCCEEDED` and compensation is `NOT_STARTED`.
+3. `PENDING`, `UNKNOWN`, a declined leg, or any pending/unknown/succeeded debit reversal MUST NOT accompany or produce `SETTLED`.
+4. Repeating the command returns the existing settlement result and creates no additional debit, credit, transfer, reversal, reputation, or Booking transition.
+5. Every Booking transition other than `COMPLETED -> SETTLED` performs zero direct settlement effects. Later server-authorized refunds or reversals are separate financial records linked to the original operation; they are auditable and idempotent and never reopen the terminal Booking.
 
-The repository MUST enforce uniqueness of settlement by booking ID and the stable settlement key. External adapters may report capability/results, but cannot authorize settlement. A partially failed or in-flight operation MUST remain `PENDING`/`UNKNOWN` until reconciliation. If a confirmed effect must be undone, only the server settlement service may invoke the defined reversal contract using a unique reversal key linked to the original stable settlement key; a reversal is auditable, idempotent, and never a second settlement.
+External adapters report normalized operation results but cannot authorize Booking state. If an operation can return `UNKNOWN`, the adapter contract MUST provide either auditable query-by-key or guaranteed idempotent same-key replay that returns the durable outcome. Query capability is therefore conditional, not universally required when atomic/idempotent replay already resolves uncertainty.
 
 ### INV-007 — Server-owned economic and assignment side effects
 
 The server domain/service layer is authoritative for package/price freeze, worker assignment, reputation changes, settlement, refunds, and reversals. Client input is a request only; it cannot set price, award reputation, select an unauthorized worker, mark completion, issue a refund, or invoke a reversal. The repository durably records the server-approved terms and immutable audit references. External capabilities are accessed through neutral service ports; adapter-specific behavior remains outside the core and cannot change domain state directly.
 
-Price and assignment MUST be frozen at `REQUESTED -> ACCEPTED`; later client or external observations cannot rewrite them. Reputation changes occur only after `SETTLED` and are idempotently keyed to the booking settlement. Refunds occur only through a server-authorized refund transition in the settlement contract, with a unique refund key linked to the stable settlement key; no refund is implied by cancellation before settlement. These effects are zero on every non-settlement transition.
+Price and assignment MUST be frozen at `OFFERED -> ACCEPTED`; later client or external observations cannot rewrite them. Reputation changes occur only after the applicable authoritative terminal outcome and are idempotently keyed to that Booking outcome; successful-completion rewards require `SETTLED`.
+
+A Booking cancellation, expiry, or no-show transition has no direct settlement, refund, capture, or release side effect. After that transition commits, a separate server-authorized cancellation-finance policy MUST evaluate the frozen policy snapshot, server timestamps, prior payment/hold records, and terminal reason. For eligible held deposits or prepaid amounts, it may request an idempotent full/partial refund or deposit release using stable keys linked to the original hold/debit/prepayment. The server computes the amount; client input cannot. Policy is configuration-driven (for example `OFFERED`, `RESERVED`, `TRAVELLING`, `ARRIVED`, or `ACTIVE`), may legitimately yield no automatic refund for an active session, and never reopens the terminal Booking. `PENDING`/`UNKNOWN` refunds or releases remain separate durable financial records and are reconciled with the same keys.
 
 Adult-themed interaction is non-graphic and consent-based at the system boundary. Requests, package definitions, UI messages, logs, and persistence MUST contain only abstract package identifiers, durations/terms, and the closed session states above. Explicit sexual content, descriptions, media, or free-form erotic instructions are invalid domain input and MUST be rejected or excluded before domain processing. Consent MUST be explicit, attributable to the relevant participant, current for the session/package, and revocable before completion; a missing, expired, or withdrawn consent prevents activation and settlement.
 
@@ -167,43 +212,45 @@ The domain/service layer owns profile and booking identity. The ped provider own
 
 ### INV-006 — Server-authoritative, booking-bound, exclusive reservation
 
-Location reservation ownership is server-authoritative and MUST be bound to exactly one Booking. A location is exclusive while its reservation is `RESERVED` or `OCCUPIED`; no other booking may acquire, occupy, or be assigned that location during that interval.
+Location reservation ownership is server-authoritative and MUST be bound to exactly one Booking. A location is not reusable while its reservation is `RESERVED`, `OCCUPIED`, `RELEASE_PENDING`, or `QUARANTINED`; each of those states has `reassignable=false`, and no other Booking may acquire, occupy, or be assigned that location.
 
-The closed reservation state enum is `RESERVED`, `OCCUPIED`, `RELEASED`, and `RECOVERED`. `RELEASED` and `RECOVERED` are terminal and available for a new reservation. The only transitions are:
+The closed reservation state enum is `RESERVED`, `OCCUPIED`, `RELEASE_PENDING`, `QUARANTINED`, and `RELEASED`. `RELEASED` is the only terminal and reassignable state. The only transitions are:
 
 | From | To | Guard | Domain side effect |
 | --- | --- | --- | --- |
-| `RESERVED` | `OCCUPIED` | Owning booking is `ACTIVE` and a neutral capability port reports usable location | Mark location occupied by same booking |
-| `RESERVED` | `RELEASED` | Owning booking is normally completed or cancelled before lease expiry | Clear active owner and make available |
-| `RESERVED` | `RECOVERED` | Server clock is at/after the recorded reservation lease expiry, or authoritative failure reconciliation runs | Clear stale owner and make available |
-| `OCCUPIED` | `RELEASED` | Owning booking is normally completed/cancelled and active use ended | Clear active owner and make available |
-| `OCCUPIED` | `RECOVERED` | Authoritative disconnect/failure reconciliation confirms active use is lost | Clear stale owner and make available |
+| `RESERVED` | `OCCUPIED` | Owning Booking is entering `ACTIVE`; provider-backed allocation and target observations are healthy/current | Mark occupied by the same Booking; retain exclusive owner |
+| `RESERVED`/`OCCUPIED` | `RELEASE_PENDING` | The owning Booking completed or reached a non-settling outcome, the lease expired, or server reconciliation requires cleanup | Persist a stable release key and cleanup intent; retain owner lock and `reassignable=false` |
+| `RELEASE_PENDING` | `RELEASED` | External release is confirmed `SUCCEEDED`, or an authoritative reconciliation proves the allocation absent; for server-only configured capacity, the server repository is the authoritative allocator | Atomically clear the active owner and set `reassignable=true` |
+| `RELEASE_PENDING` | `QUARANTINED` | External cleanup is `UNKNOWN`, unavailable, timed out, failed without proof of absence, or provider state is stale | Persist failure/correlation/retry metadata; retain the allocation lock and `reassignable=false` |
+| `QUARANTINED` | `RELEASE_PENDING` | A server recovery worker begins a same-key cleanup/reconciliation attempt under expected version | Record retry attempt without changing owner or reassignability |
+| `QUARANTINED` | `RELEASED` | Authoritative provider query/reconciliation proves the allocation absent, or a same-key release is confirmed `SUCCEEDED` | Atomically clear owner and set `reassignable=true` |
 
-The lease guard is server-clock based: `now >= lease_expires_at`, using the reservation's persisted version; client clocks cannot expire or recover a reservation. No terminal reservation can be reopened or transferred; duplicate lifecycle commands are idempotent.
+The lease guard is server-clock based: `now >= lease_expires_at`, using the persisted version; client clocks cannot expire a reservation. Lease expiry starts release/reconciliation but is not proof that an external motel, housing, venue, or vehicle allocation disappeared. No reservation is reopened or transferred; after `RELEASED`, a new Booking receives a new reservation record/key. Duplicate lifecycle commands are idempotent.
 
 **Acquire preconditions**
 
 1. The server reservation service receives the request and resolves the canonical location ID.
 2. The Booking exists, is eligible for reservation, and has no different active reservation.
-3. The location is available and has no active `RESERVED` or `OCCUPIED` owner.
+3. The location is available and has no `RESERVED`, `OCCUPIED`, `RELEASE_PENDING`, or `QUARANTINED` record with `reassignable=false`.
 4. The request satisfies any configured capacity/eligibility rules.
 
 **Acquire postconditions**
 
 1. Exactly one reservation record is created or idempotently returned.
-2. The record names the booking ID, location ID, lifecycle state `RESERVED`, owner/lease data, and version/expiry data needed for recovery.
+2. The record names the Booking ID, location ID, lifecycle state `RESERVED`, `reassignable=false`, owner/lease data, provider allocation correlation, and version/expiry data needed for recovery.
 3. A concurrent or replayed request cannot create a second owner.
 
 **Occupy preconditions/postconditions**
 
-Occupation is allowed only for the reservation's owning booking after a neutral location capability port reports the required usable observation. The server atomically changes that reservation from `RESERVED` to `OCCUPIED`; it does not transfer ownership or permit another booking to occupy it. Adapter-specific checks cannot grant domain ownership.
+Occupation is allowed only for the reservation's owning Booking after a neutral location capability port reports the required healthy, fresh, usable observation. The server atomically changes that reservation from `RESERVED` to `OCCUPIED`; it does not transfer ownership or permit another Booking to occupy it. Adapter-specific checks cannot grant domain ownership.
 
 **Release/recovery rules**
 
-1. A reservation may become available only through the reservation lifecycle service, by `RELEASED` after normal completion/cancellation or `RECOVERED` after expiry, disconnect, provider failure, or reconciliation.
-2. Release/recovery MUST verify the booking owner and reservation version/lease where applicable, be idempotent, and clear the active owner atomically.
-3. Client messages, runtime adapters, payment adapters, and repositories MUST NOT directly free, transfer, or overwrite an active reservation. The repository enforces uniqueness of active ownership; neutral capability ports report physical availability/failure but do not grant domain ownership.
-4. A booking cancellation/expiry that has an active reservation MUST trigger the lifecycle service; a lost provider callback is handled by expiry/reconciliation, never by ad hoc deletion.
+1. Booking completion, cancellation, no-show, expiry, interruption classification, disconnect, or provider loss requests `RELEASE_PENDING`; it does not directly free the location.
+2. Release/recovery MUST verify Booking owner, reservation version, stable release key, and provider allocation correlation. It is idempotent and clears the active owner only in the same atomic update that establishes `RELEASED` and `reassignable=true`.
+3. `UNKNOWN`, timeout, missing callback, provider restart, stale target, or local lease expiry MUST enter/remain `QUARANTINED`; clearing a local owner field, deleting a row, or waiting out a TTL is never authoritative external cleanup.
+4. Client messages, runtime adapters, payment adapters, and repositories MUST NOT directly free, transfer, overwrite, or mark an allocation reusable. Neutral capability ports report release/query results; the server lifecycle service owns the state transition.
+5. Reassignment requires either confirmed same-key release success or authoritative reconciliation proving absence. If neither is available, quarantine persists indefinitely and the server selects a different allowlisted location or fails the affected flow closed.
 
 ## Enforcement ownership summary
 
@@ -211,10 +258,10 @@ Occupation is allowed only for the reservation's owning booking after a neutral 
 | --- | --- | --- | --- | --- |
 | INV-001 common Booking | Defines one entity and mode derivation | Routes both modes to same workflow | Stores one schema/ID space | Supplies external observations only |
 | INV-002/004 participants | Normalizes and allowlists | Resolves server identities and rejects before side effects | Persists normalized pair and constraints | Cannot assert unsupported type |
-| INV-003 settlement | Defines canonical transition and zero side effects elsewhere | Executes idempotent settlement | Enforces uniqueness/atomicity | Reports payment/reward capability only |
+| INV-003 settlement | Defines canonical transition plus atomic/split-leg outcomes | Executes stable-key transfer/legs and safe compensation | Enforces intent/leg/reversal uniqueness | Reports normalized payment results only |
 | Consent/session boundary | Defines abstract states and consent predicates | Gates activation/settlement | Stores abstract states only | Cannot provide explicit content |
 | INV-005 NPC identity | Owns profile identity/lifecycle distinction | Authorizes association | Persists profile ID, not sole ped handle | Owns ephemeral ped lifecycle |
-| INV-006 reservation | Defines lifecycle and ownership predicates | Acquires/occupies/releases/recovers | Enforces active-owner uniqueness | Reports physical availability/failure |
+| INV-006 reservation | Defines lifecycle, quarantine, and reassignability predicates | Acquires/occupies/releases/reconciles | Enforces active-owner and quarantine locks | Reports physical allocation/release observations |
 
 ## Invalid examples (all rejected)
 
@@ -223,10 +270,13 @@ Occupation is allowed only for the reservation's owning booking after a neutral 
 - A request with one participant, three participants, duplicate participant IDs, or a role missing/duplicated.
 - A client-supplied `NPC` claim for a player identity, or a ped handle used without a server-resolved profile.
 - A mode claim of Client Mode paired with `PLAYER` worker + `NPC` client.
-- A second settlement call after the booking is already `SETTLED`, or a reward issued from `COMPLETED`/`CANCELLED` directly.
+- A second settlement call after the Booking is already `SETTLED`, a new retry key after an `UNKNOWN` result, or split-leg credit before debit success.
+- A debit reversal while credit is still `UNKNOWN` and may already have succeeded, unless the provider offers an atomic conditional compensation contract.
 - Activation or settlement with `CONSENT_PENDING`, `DECLINED`, expired consent, or withdrawn consent.
-- An attempt to reserve a location already `RESERVED`/`OCCUPIED`, or to reserve it for a second booking.
+- An attempt to reserve a location already `RESERVED`/`OCCUPIED`/`RELEASE_PENDING`/`QUARANTINED`, or to reserve it for a second Booking.
 - A client/provider request that deletes an active reservation or marks a different booking's reservation `RELEASED`.
+- Treating lease expiry, a missing release callback, or provider outage as proof that an external allocation is reusable.
+- A client-supplied cancellation refund amount, or a cancellation transition that directly moves money instead of invoking the separate idempotent policy after commit.
 - A payload, log, package, or provider response containing explicit adult content instead of abstract package/session data.
 
 These invariants are the minimum v1 contract. Later features may add capabilities only through a separately versioned specification change; they MUST NOT reinterpret or weaken these rules.
