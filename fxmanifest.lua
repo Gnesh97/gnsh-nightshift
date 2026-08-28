@@ -21,6 +21,7 @@ server_scripts {
     'server/adapters/database/interface.lua',
     'server/adapters/database/oxmysql.lua',
     'server/core/migrations.lua',
+    'server/repositories/base_repository.lua',
     'server/bootstrap.lua'
 }
 client_script 'client/bootstrap.lua'

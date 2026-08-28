@@ -6,6 +6,8 @@ load('tests/event_bus_contracts.lua')
 load('tests/database_contracts.lua')
 load('tests/migrations_contracts.lua')
 load('tests/schema_contracts.lua')
+load('server/repositories/base_repository.lua')
+load('tests/repository_contracts.lua')
 
 local function check(value, message) assert(value, message) end
 
