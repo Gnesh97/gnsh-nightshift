@@ -105,6 +105,12 @@ do
     value = validConfig(); value.servicePackages[1].locationIds = { 'configured_default', 'configured_default' }
     normalized, err = NightShift.Validators.validateConfig(value)
     check(not normalized and err.code == 'INVALID_LOCATION_REFERENCE', 'duplicate location references must fail')
+    value = validConfig(); value.servicePackages = { value.servicePackages[1], [3] = NightShift.Validators.copy(value.servicePackages[1]) }
+    normalized, err = NightShift.Validators.validateConfig(value)
+    check(not normalized and err.code == 'INVALID_CONFIG', 'holes with trailing entries must fail')
+    value = validConfig(); value.servicePackages[1].locationIds = false; value.servicePackages[1].locations = { 'configured_default' }
+    normalized, err = NightShift.Validators.validateConfig(value)
+    check(not normalized and err.code == 'INVALID_CONFIG', 'invalid primary location alias must not fall back')
 end
 do
     local value = validConfig(); value.features = false
@@ -121,6 +127,9 @@ do
     value = validConfig(); value.npcProfiles[1].description = 'graphic content'
     normalized, err = NightShift.Validators.validateConfig(value)
     check(not normalized and err.code == 'INVALID_CONFIG', 'free-form NPC profile content must fail')
+    value = validConfig(); value.npcProfiles[1].traits = { model = 'graphic' }
+    normalized, err = NightShift.Validators.validateConfig(value)
+    check(not normalized and err.code == 'INVALID_CONFIG', 'nested NPC profile fields must fail')
 end
 
 do
