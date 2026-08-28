@@ -47,27 +47,56 @@ Player-to-player booking is outside the v1 core. It MUST NOT be represented as a
 
 ## Session, consent, and settlement
 
+### Closed state machines
+
+The v1 Booking state enum is closed: `REQUESTED`, `ACCEPTED`, `RESERVED`, `ACTIVE`, `COMPLETED`, `SETTLED`, `CANCELLED`, and `EXPIRED`. `SETTLED`, `CANCELLED`, and `EXPIRED` are terminal. The only allowed booking transitions are:
+
+| From | To | Guard | Domain side effect |
+| --- | --- | --- | --- |
+| `REQUESTED` | `ACCEPTED` | Allowlisted participants and package accepted | Freeze assignment/package terms |
+| `REQUESTED` | `CANCELLED` | Server-authorized cancellation before acceptance | No settlement; begin reservation cleanup if needed |
+| `ACCEPTED` | `RESERVED` | Reservation service atomically owns a location | Bind the active reservation to this booking |
+| `ACCEPTED` | `CANCELLED` | Server-authorized cancellation before activation | No settlement; release/recover reservation if present |
+| `RESERVED` | `ACTIVE` | Reservation is occupied and session consent is `CONSENTED` | Start the abstract session |
+| `RESERVED` | `CANCELLED` | Cancellation/expiry before activation | No settlement; release/recover reservation |
+| `ACTIVE` | `COMPLETED` | Session package terms complete and consent remains valid | Stop session; begin reservation release |
+| `ACTIVE` | `CANCELLED` | Consent withdrawn, failure, or authorized cancellation | No settlement; release/recover reservation |
+| `COMPLETED` | `SETTLED` | Settlement contract succeeds or is durably recorded as pending/unknown | Commit exactly one settlement outcome |
+| `REQUESTED`/`ACCEPTED`/`RESERVED` | `EXPIRED` | Server clock reaches the defined request/reservation lease | No settlement; recover reservation if present |
+
+No other booking transition is valid. A terminal booking cannot be edited, reactivated, or transitioned again; duplicate commands return the existing terminal result without side effects. `EXPIRED` is distinct from `CANCELLED` for auditability, but both are non-settling terminal outcomes.
+
+The v1 Session state enum is closed: `PROPOSED`, `CONSENT_PENDING`, `CONSENTED`, `ACTIVE`, `COMPLETED`, `DECLINED`, `WITHDRAWN`, and `CANCELLED`. Valid transitions are `PROPOSED -> CONSENT_PENDING -> CONSENTED -> ACTIVE -> COMPLETED`, with `CONSENT_PENDING -> DECLINED`, `CONSENTED -> WITHDRAWN`, and `ACTIVE -> WITHDRAWN`; `DECLINED`, `WITHDRAWN`, `COMPLETED`, and `CANCELLED` are terminal. Booking activation requires session `CONSENTED`; settlement requires booking `COMPLETED` and session `COMPLETED`.
+
 ### INV-003 — Exactly-once canonical settlement
 
 Settlement MUST happen exactly once and only on the canonical transition into `SETTLED`.
 
 **Preconditions for `... -> SETTLED`**
 
-1. The booking exists and is in a non-terminal state permitted by the lifecycle.
+1. The booking is exactly in `COMPLETED`; `COMPLETED -> SETTLED` is the sole settlement transition.
 2. The session has satisfied its abstract package requirements and consent boundary.
-3. The server-side settlement service owns the transition and supplies an idempotency key tied to the booking and settlement attempt.
-4. The booking has not already entered `SETTLED`.
+3. The server-side settlement service owns the transition and uses one stable settlement key derived from the booking ID (not a per-retry or per-attempt key).
+4. The booking has not already entered `SETTLED` and has no terminal cancellation/expiry outcome.
 
 **Postconditions**
 
 1. The booking state changes to `SETTLED` once.
-2. The settlement record, rewards/payment effects, and settlement timestamp are created/committed as one idempotent domain operation.
-3. Repeating the same request returns the existing settlement result and creates no additional effect.
+2. A durable settlement record is created with status `PENDING`, `SUCCEEDED`, `UNKNOWN`, or `REVERSED`, keyed uniquely by booking ID and the stable settlement key.
+3. External payment/reward effects use the same stable key and a contract that guarantees idempotent replay or exposes an auditable query-by-key operation.
+4. `PENDING` or `UNKNOWN` is durably retained and reconciled by the settlement service; a retry never creates a new key or blindly repeats an uncertain external effect.
+5. Repeating the same request returns the existing settlement result and creates no additional effect. `SETTLED` is recorded only after success is confirmed or the contract's defined commit/reconciliation rule is satisfied.
 4. Every other booking transition (creation, acceptance, reservation, occupation, completion, cancellation, expiry, recovery) performs zero settlement effects.
 
-The repository MUST enforce uniqueness of settlement by booking ID (and the idempotency key where stored). Providers may report results, but cannot authorize a second settlement. A partially failed operation MUST be retried/reconciled through the settlement service; callers MUST NOT manually award or reverse settlement outside the defined settlement/reversal contract.
+The repository MUST enforce uniqueness of settlement by booking ID and the stable settlement key. External adapters may report capability/results, but cannot authorize settlement. A partially failed or in-flight operation MUST remain `PENDING`/`UNKNOWN` until reconciliation. If a confirmed effect must be undone, only the server settlement service may invoke the defined reversal contract using a unique reversal key linked to the original stable settlement key; a reversal is auditable, idempotent, and never a second settlement.
 
-Adult-themed interaction is non-graphic and consent-based at the system boundary. Requests, package definitions, UI messages, logs, and persistence MUST contain only abstract package identifiers, durations/terms, and session states such as `PROPOSED`, `CONSENT_PENDING`, `CONSENTED`, `ACTIVE`, `COMPLETED`, or `DECLINED/CANCELLED`. Explicit sexual content, descriptions, media, or free-form erotic instructions are invalid domain input and MUST be rejected or excluded before domain processing. Consent MUST be explicit, attributable to the relevant participant, current for the session/package, and revocable before completion; a missing, expired, or withdrawn consent prevents activation and settlement.
+### INV-007 — Server-owned economic and assignment side effects
+
+The server domain/service layer is authoritative for package/price freeze, worker assignment, reputation changes, settlement, refunds, and reversals. Client input is a request only; it cannot set price, award reputation, select an unauthorized worker, mark completion, issue a refund, or invoke a reversal. The repository durably records the server-approved terms and immutable audit references. External capabilities are accessed through neutral service ports; adapter-specific behavior remains outside the core and cannot change domain state directly.
+
+Price and assignment MUST be frozen at `REQUESTED -> ACCEPTED`; later client or external observations cannot rewrite them. Reputation changes occur only after `SETTLED` and are idempotently keyed to the booking settlement. Refunds occur only through a server-authorized refund transition in the settlement contract, with a unique refund key linked to the stable settlement key; no refund is implied by cancellation before settlement. These effects are zero on every non-settlement transition.
+
+Adult-themed interaction is non-graphic and consent-based at the system boundary. Requests, package definitions, UI messages, logs, and persistence MUST contain only abstract package identifiers, durations/terms, and the closed session states above. Explicit sexual content, descriptions, media, or free-form erotic instructions are invalid domain input and MUST be rejected or excluded before domain processing. Consent MUST be explicit, attributable to the relevant participant, current for the session/package, and revocable before completion; a missing, expired, or withdrawn consent prevents activation and settlement.
 
 ## Participants
 
@@ -126,6 +155,8 @@ The domain/service layer owns profile and booking identity. The ped provider own
 
 Location reservation ownership is server-authoritative and MUST be bound to exactly one Booking. A location is exclusive while its reservation is `RESERVED` or `OCCUPIED`; no other booking may acquire, occupy, or be assigned that location during that interval.
 
+The closed reservation state enum is `RESERVED`, `OCCUPIED`, `RELEASED`, and `RECOVERED`. `RELEASED` and `RECOVERED` are terminal and available for a new reservation. The only transitions are `RESERVED -> OCCUPIED` after the owning booking starts, `RESERVED -> RELEASED` on normal cancellation/completion, `RESERVED -> RECOVERED` on lease expiry/failure, `OCCUPIED -> RELEASED` on normal completion/cancellation, and `OCCUPIED -> RECOVERED` on disconnect/failure/reconciliation. No terminal reservation can be reopened or transferred; duplicate lifecycle commands are idempotent.
+
 **Acquire preconditions**
 
 1. The server reservation service receives the request and resolves the canonical location ID.
@@ -141,13 +172,13 @@ Location reservation ownership is server-authoritative and MUST be bound to exac
 
 **Occupy preconditions/postconditions**
 
-Occupation is allowed only for the reservation's owning booking after the provider confirms the location is usable. The server atomically changes that reservation from `RESERVED` to `OCCUPIED`; it does not transfer ownership or permit another booking to occupy it.
+Occupation is allowed only for the reservation's owning booking after a neutral location capability port reports the required usable observation. The server atomically changes that reservation from `RESERVED` to `OCCUPIED`; it does not transfer ownership or permit another booking to occupy it. Adapter-specific checks cannot grant domain ownership.
 
 **Release/recovery rules**
 
 1. A reservation may become available only through the reservation lifecycle service, by `RELEASED` after normal completion/cancellation or `RECOVERED` after expiry, disconnect, provider failure, or reconciliation.
 2. Release/recovery MUST verify the booking owner and reservation version/lease where applicable, be idempotent, and clear the active owner atomically.
-3. Client messages, ped providers, payment providers, and repositories MUST NOT directly free, transfer, or overwrite an active reservation. The repository enforces uniqueness of active ownership; the provider reports physical availability but does not grant domain ownership.
+3. Client messages, runtime adapters, payment adapters, and repositories MUST NOT directly free, transfer, or overwrite an active reservation. The repository enforces uniqueness of active ownership; neutral capability ports report physical availability/failure but do not grant domain ownership.
 4. A booking cancellation/expiry that has an active reservation MUST trigger the lifecycle service; a lost provider callback is handled by expiry/reconciliation, never by ad hoc deletion.
 
 ## Enforcement ownership summary
