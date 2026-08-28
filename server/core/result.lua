@@ -13,11 +13,12 @@ local function copy(value, seen)
 end
 
 function Result.ok(value, metadata)
+    local safeValue = copy(value)
     return {
         ok = true,
         success = true,
-        value = value,
-        data = value,
+        value = safeValue,
+        data = copy(safeValue),
         metadata = copy(metadata)
     }
 end

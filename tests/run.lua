@@ -43,6 +43,20 @@ do
 end
 
 do
+    local ok, err = NightShift.Server.bootstrap({ config = false })
+    check(not ok and NightShift.Server.readiness == 'FAILED', 'explicitly invalid config must prevent READY')
+    check(err and err.code == 'INVALID_CONFIG', 'invalid config failure must remain structured')
+end
+
+do
+    local instance = NightShift.ServerBootstrap.new({
+        stages = { config = function() return { ok = false, success = true, code = 'CONTRADICTORY' } end }
+    })
+    local ok = instance:boot()
+    check(not ok and instance.readiness == 'FAILED', 'contradictory stage result must fail closed')
+end
+
+do
     local handler
     AddEventHandler = function(_, callback) handler = callback end
     GetCurrentResourceName = function() return 'gnsh-nightshift' end

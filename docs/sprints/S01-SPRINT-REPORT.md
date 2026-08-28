@@ -10,6 +10,7 @@
 - **NS-011 — Config Model & Validation:** added provider mode/registry, feature defaults, abstract service-package/location/NPC schemas, demand/heat placeholders, normalized copies, cross-reference checks, and fail-closed actionable errors.
 - **NS-012 — Core Result / Logger / Clock:** added structured Result values, stable provider-neutral error codes, injectable UTC clock, correlation IDs, debug category filtering, sink isolation, recursive redaction, and caller-context copying.
 - **NS-013 — Internal Event Bus:** added deterministic subscribe/unsubscribe, post-commit event envelopes, listener snapshotting, correlation propagation, isolated handler failures, aggregate delivery results, and no network-event surface.
+- **Direct review hardening:** made resource load auto-start the server bootstrap, rejected explicitly invalid stage/config outcomes, copied successful Result values, handled non-finite clock input safely, and expanded sensitive-key redaction aliases.
 
 ## Changed files
 
@@ -44,7 +45,7 @@
 ## Tests and verification
 
 - TDD RED/GREEN completed for NS-013 event-bus behavior.
-- `lua tests/run.lua` passed lifecycle, config validation, Result/Logger/Clock contracts, event-bus isolation, correlation, and no-network-surface checks.
+- `lua tests/run.lua` passed lifecycle auto-start/invalid-config checks, config validation, Result/Logger/Clock contracts, event-bus isolation, correlation, and no-network-surface checks.
 - `git diff --check a668ec5..HEAD` passed with no whitespace errors.
 - No FiveM server/test runner is available locally; `ensure nightshift` smoke execution remains a runtime-environment check.
 

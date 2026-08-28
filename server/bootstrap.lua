@@ -4,12 +4,21 @@ local readiness = NightShift.Enums.Readiness
 local defaultStages = {
     config = function(context, bootstrap)
         local options = bootstrap and bootstrap.options or {}
-        local source = (context and context.config) or options.config or NightShift.DefaultConfig
+        local source = NightShift.DefaultConfig
+        if type(context) == 'table' and rawget(context, 'config') ~= nil then
+            source = rawget(context, 'config')
+        elseif type(options) == 'table' and rawget(options, 'config') ~= nil then
+            source = rawget(options, 'config')
+        end
+        local resolver = options.resolveProvider
+        if type(context) == 'table' and rawget(context, 'resolveProvider') ~= nil then
+            resolver = rawget(context, 'resolveProvider')
+        end
         local normalized, err = NightShift.Validators.validateConfig(source, {
             registry = options.providerRegistry,
-            resolveProvider = (context and context.resolveProvider) or options.resolveProvider
+            resolveProvider = resolver
         })
-        if not normalized then return err end
+        if not normalized then return NightShift.Result.err(err) end
         return { ok = true, config = normalized }
     end
 }
@@ -26,7 +35,7 @@ local function failure(stage, reason)
         copy.stage = copy.stage or stage
         return copy
     end
-    return NightShift.Errors.create('STAGE_FAILED', ('Required stage "%s" failed'):format(stage), {
+    return NightShift.Errors.create(NightShift.Errors.Codes.BOOTSTRAP_STAGE, ('Required stage "%s" failed'):format(stage), {
         stage = stage,
         reason = tostring(reason or 'unknown failure')
     })
@@ -67,7 +76,8 @@ function Bootstrap:boot(context)
             self.error = failure(stage, result)
             return false, self.error
         end
-        if result == nil or result == false or (type(result) == 'table' and result.ok == false) then
+        local stageSucceeded = result == true or (type(result) == 'table' and result.ok ~= false and result.success ~= false and (result.ok == true or result.success == true))
+        if not stageSucceeded then
             self.readiness = readiness.FAILED
             self.error = failure(stage, type(result) == 'table' and result or 'initializer returned no success result')
             return false, self.error
@@ -136,4 +146,12 @@ NightShift.Server.bootstrap = function(options, context)
     NightShift.Server.readiness = instance.readiness
     NightShift.Server.error = instance.error
     return ok, result
+end
+
+-- A FiveM resource script executes on load; start the server lifecycle here so
+-- `ensure nightshift` cannot leave the resource in STARTING without an
+-- explicit external call. Tests and embedders can still create isolated
+-- Bootstrap instances through the exported constructor.
+if not NightShift.Server.instance then
+    NightShift.Server.bootstrap()
 end

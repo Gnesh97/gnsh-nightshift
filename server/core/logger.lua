@@ -4,7 +4,8 @@ local Logger = NightShift.Logger or {}
 local sensitive = {
     token=true, password=true, secret=true, authorization=true, account=true,
     identifier=true, phone=true, coordinates=true, coordinate=true, rawpayload=true,
-    payload=true
+    payload=true, sessiontoken=true, accesstoken=true, refreshtoken=true,
+    apikey=true, clientsecret=true, privatekey=true, webhook=true, webhookurl=true
 }
 
 local function copyAndRedact(value, seen, key)

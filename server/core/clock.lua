@@ -3,9 +3,13 @@ NightShift = NightShift or {}
 local Clock = NightShift.Clock or {}
 
 local function epochNow() return os.time() end
+local function finite(value)
+    return type(value) == 'number' and value == value and value ~= math.huge and value ~= -math.huge
+end
 
 function Clock.utcTimestamp(epoch)
-    epoch = tonumber(epoch) or epochNow()
+    epoch = tonumber(epoch)
+    if not finite(epoch) then epoch = epochNow() end
     return os.date('!%Y-%m-%dT%H:%M:%SZ', epoch)
 end
 
@@ -17,7 +21,8 @@ end
 
 function Clock:now()
     local ok, value = pcall(self._now)
-    if ok and tonumber(value) then return tonumber(value) end
+    value = tonumber(value)
+    if ok and finite(value) then return value end
     return epochNow()
 end
 
