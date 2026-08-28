@@ -11,7 +11,7 @@ A logical NPC must remain identifiable across distance, despawn, replacement, re
 
 The logical NPC profile and logical travel state are domain data separate from an optional physical ped entity. Bookings reference the logical profile ID; a runtime ped may be associated only as a fresh, server-authorized physical representation and is never the NPC's sole identity.
 
-Distant NPC travel is recorded logically under server authority. It does not require a continuously spawned ped or physical world traversal. A physical ped may represent the logical NPC when a valid provider capability and current association are available, but spawning, despawning, replacing, or losing that ped does not create, delete, complete, or reassign the logical journey or booking. Arrival remains a server-authorized conclusion based on canonical logical state and trusted provider observations, not a client ped claim.
+Distant NPC travel is recorded logically under server authority. It does not require a continuously spawned ped or physical world traversal. A physical ped may represent the logical NPC when a valid provider capability and current association are available, but spawning, despawning, replacing, or losing that ped does not create, delete, complete, or reassign the logical journey or booking. Arrival remains a server-authorized conclusion based on canonical logical state and server-validated, normalized, freshness-checked provider observations. Those observations never authorize arrival directly, and client ped claims remain untrusted.
 
 ## Consequences
 

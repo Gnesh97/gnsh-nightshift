@@ -13,7 +13,7 @@ OneSync network ownership may migrate and is never business authority. The curre
 
 State bags are metadata only. They may replicate bounded, non-sensitive presentation or association metadata written under server policy, but they are not canonical storage, proof of authority, or a transition command. Client-written or observed state-bag values are untrusted.
 
-Canonical business state is server/DB-owned. Server services validate client and runtime observations against that state and the applicable domain guards. Entity ownership migration, entity loss, or state-bag loss changes only runtime representation and cannot mutate canonical Booking, Session, NPC profile, Reservation, settlement, or audit state.
+Canonical business state is server/DB-owned. Server services validate client and runtime observations against that state and the applicable domain guards. Entity ownership migration, entity loss, or state-bag loss cannot directly mutate canonical Booking, Session, NPC profile, Reservation, settlement, or audit state. Such a loss may trigger guarded server reconciliation, which may remove a stale physical association, recover a reservation under `INV-006`, and record the required internal audit event while preserving server/DB authority.
 
 ## Consequences
 

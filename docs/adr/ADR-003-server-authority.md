@@ -19,7 +19,8 @@ Providers report normalized capabilities and bounded observations/results throug
 
 - All authoritative transitions and side effects have one validation and audit boundary.
 - Client retries and duplicate callbacks can be handled idempotently without creating a second business effect.
-- Provider failure or an `UNKNOWN` result blocks or defers the affected transition until server reconciliation; it is never interpreted as success.
+- Provider failure or an `UNKNOWN` result for an authoritative prerequisite, such as settlement, deposit, or location occupancy, blocks or defers the affected transition until server reconciliation; it is never interpreted as success.
+- Failure or an `UNKNOWN` result from an optional delivery or telemetry capability, such as phone notification or external audit transport, uses its documented fallback and does not block an otherwise valid domain transition.
 - Presentation and interaction transports may vary without changing domain authority.
 
 ## Rejected alternatives
