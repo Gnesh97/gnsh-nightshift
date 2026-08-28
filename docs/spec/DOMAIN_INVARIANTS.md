@@ -58,15 +58,28 @@ The v1 Booking state enum is closed: `REQUESTED`, `ACCEPTED`, `RESERVED`, `ACTIV
 | `ACCEPTED` | `RESERVED` | Reservation service atomically owns a location | Bind the active reservation to this booking |
 | `ACCEPTED` | `CANCELLED` | Server-authorized cancellation before activation | No settlement; release/recover reservation if present |
 | `RESERVED` | `ACTIVE` | Reservation is occupied and session consent is `CONSENTED` | Start the abstract session |
-| `RESERVED` | `CANCELLED` | Cancellation/expiry before activation | No settlement; release/recover reservation |
+| `RESERVED` | `CANCELLED` | Server-authorized cancellation before activation (not lease expiry) | No settlement; release reservation |
 | `ACTIVE` | `COMPLETED` | Session package terms complete and consent remains valid | Stop session; begin reservation release |
 | `ACTIVE` | `CANCELLED` | Consent withdrawn, failure, or authorized cancellation | No settlement; release/recover reservation |
-| `COMPLETED` | `SETTLED` | Settlement contract succeeds or is durably recorded as pending/unknown | Commit exactly one settlement outcome |
-| `REQUESTED`/`ACCEPTED`/`RESERVED` | `EXPIRED` | Server clock reaches the defined request/reservation lease | No settlement; recover reservation if present |
+| `COMPLETED` | `SETTLED` | Settlement contract confirms success for the stable booking key | Commit exactly one settlement outcome |
+| `REQUESTED`/`ACCEPTED`/`RESERVED` | `EXPIRED` | Server clock reaches the state-specific request/reservation lease; this is never cancellation | No settlement; recover reservation if present |
 
 No other booking transition is valid. A terminal booking cannot be edited, reactivated, or transitioned again; duplicate commands return the existing terminal result without side effects. `EXPIRED` is distinct from `CANCELLED` for auditability, but both are non-settling terminal outcomes.
 
-The v1 Session state enum is closed: `PROPOSED`, `CONSENT_PENDING`, `CONSENTED`, `ACTIVE`, `COMPLETED`, `DECLINED`, `WITHDRAWN`, and `CANCELLED`. Valid transitions are `PROPOSED -> CONSENT_PENDING -> CONSENTED -> ACTIVE -> COMPLETED`, with `CONSENT_PENDING -> DECLINED`, `CONSENTED -> WITHDRAWN`, and `ACTIVE -> WITHDRAWN`; `DECLINED`, `WITHDRAWN`, `COMPLETED`, and `CANCELLED` are terminal. Booking activation requires session `CONSENTED`; settlement requires booking `COMPLETED` and session `COMPLETED`.
+The v1 Session state enum is closed: `PROPOSED`, `CONSENT_PENDING`, `CONSENTED`, `ACTIVE`, `COMPLETED`, `DECLINED`, `WITHDRAWN`, and `CANCELLED`. The only valid transitions are:
+
+| From | To | Guard | Domain side effect |
+| --- | --- | --- | --- |
+| `PROPOSED` | `CONSENT_PENDING` | Abstract package is valid and offered | Record consent request; no settlement |
+| `CONSENT_PENDING` | `CONSENTED` | Both required participants explicitly consent before consent lease expires | Record attributable consent timestamps |
+| `CONSENT_PENDING` | `DECLINED` | A required participant declines or consent lease expires | Block activation/settlement |
+| `CONSENTED` | `ACTIVE` | Owning booking enters `ACTIVE` and consent remains current | Start abstract session |
+| `CONSENTED` | `WITHDRAWN` | Consent is withdrawn before activation | Block activation/settlement |
+| `ACTIVE` | `COMPLETED` | Package terms complete while consent remains current | Record completion; permit booking completion |
+| `ACTIVE` | `WITHDRAWN` | Consent is withdrawn during session | Stop session; block settlement |
+| `PROPOSED`/`CONSENT_PENDING`/`CONSENTED`/`ACTIVE` | `CANCELLED` | Owning booking is server-cancelled | Stop/block session and release/recover reservation |
+
+`DECLINED`, `WITHDRAWN`, `COMPLETED`, and `CANCELLED` are terminal. No other session transition is valid. Booking activation requires session `CONSENTED`; settlement requires booking `COMPLETED` and session `COMPLETED`.
 
 ### INV-003 — Exactly-once canonical settlement
 
@@ -82,10 +95,10 @@ Settlement MUST happen exactly once and only on the canonical transition into `S
 **Postconditions**
 
 1. The booking state changes to `SETTLED` once.
-2. A durable settlement record is created with status `PENDING`, `SUCCEEDED`, `UNKNOWN`, or `REVERSED`, keyed uniquely by booking ID and the stable settlement key.
+2. A durable settlement record is created with status `PENDING`, `SUCCEEDED`, `UNKNOWN`, or `REVERSED`, keyed uniquely by booking ID and the stable settlement key. `PENDING`/`UNKNOWN` are non-terminal settlement-operation statuses and MUST NOT transition the Booking to `SETTLED`.
 3. External payment/reward effects use the same stable key and a contract that guarantees idempotent replay or exposes an auditable query-by-key operation.
 4. `PENDING` or `UNKNOWN` is durably retained and reconciled by the settlement service; a retry never creates a new key or blindly repeats an uncertain external effect.
-5. Repeating the same request returns the existing settlement result and creates no additional effect. `SETTLED` is recorded only after success is confirmed or the contract's defined commit/reconciliation rule is satisfied.
+5. Repeating the same request returns the existing settlement result and creates no additional effect. The only guard for `COMPLETED -> SETTLED` is confirmed external success for that stable key; pending/unknown outcomes remain in `COMPLETED` while reconciliation continues.
 4. Every other booking transition (creation, acceptance, reservation, occupation, completion, cancellation, expiry, recovery) performs zero settlement effects.
 
 The repository MUST enforce uniqueness of settlement by booking ID and the stable settlement key. External adapters may report capability/results, but cannot authorize settlement. A partially failed or in-flight operation MUST remain `PENDING`/`UNKNOWN` until reconciliation. If a confirmed effect must be undone, only the server settlement service may invoke the defined reversal contract using a unique reversal key linked to the original stable settlement key; a reversal is auditable, idempotent, and never a second settlement.
@@ -155,7 +168,17 @@ The domain/service layer owns profile and booking identity. The ped provider own
 
 Location reservation ownership is server-authoritative and MUST be bound to exactly one Booking. A location is exclusive while its reservation is `RESERVED` or `OCCUPIED`; no other booking may acquire, occupy, or be assigned that location during that interval.
 
-The closed reservation state enum is `RESERVED`, `OCCUPIED`, `RELEASED`, and `RECOVERED`. `RELEASED` and `RECOVERED` are terminal and available for a new reservation. The only transitions are `RESERVED -> OCCUPIED` after the owning booking starts, `RESERVED -> RELEASED` on normal cancellation/completion, `RESERVED -> RECOVERED` on lease expiry/failure, `OCCUPIED -> RELEASED` on normal completion/cancellation, and `OCCUPIED -> RECOVERED` on disconnect/failure/reconciliation. No terminal reservation can be reopened or transferred; duplicate lifecycle commands are idempotent.
+The closed reservation state enum is `RESERVED`, `OCCUPIED`, `RELEASED`, and `RECOVERED`. `RELEASED` and `RECOVERED` are terminal and available for a new reservation. The only transitions are:
+
+| From | To | Guard | Domain side effect |
+| --- | --- | --- | --- |
+| `RESERVED` | `OCCUPIED` | Owning booking is `ACTIVE` and a neutral capability port reports usable location | Mark location occupied by same booking |
+| `RESERVED` | `RELEASED` | Owning booking is normally completed or cancelled before lease expiry | Clear active owner and make available |
+| `RESERVED` | `RECOVERED` | Server clock is at/after the recorded reservation lease expiry, or authoritative failure reconciliation runs | Clear stale owner and make available |
+| `OCCUPIED` | `RELEASED` | Owning booking is normally completed/cancelled and active use ended | Clear active owner and make available |
+| `OCCUPIED` | `RECOVERED` | Authoritative disconnect/failure reconciliation confirms active use is lost | Clear stale owner and make available |
+
+The lease guard is server-clock based: `now >= lease_expires_at`, using the reservation's persisted version; client clocks cannot expire or recover a reservation. No terminal reservation can be reopened or transferred; duplicate lifecycle commands are idempotent.
 
 **Acquire preconditions**
 
