@@ -13,5 +13,10 @@ shared_scripts {
     'config/config.lua'
 }
 
-server_script 'server/bootstrap.lua'
+server_scripts {
+    'server/core/result.lua',
+    'server/core/clock.lua',
+    'server/core/logger.lua',
+    'server/bootstrap.lua'
+}
 client_script 'client/bootstrap.lua'

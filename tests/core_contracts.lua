@@ -1,0 +1,38 @@
+local function check(value, message) assert(value, message) end
+
+do
+    local result = NightShift.Result.ok({ id = 1 }, { correlationId = 'abc' })
+    check(result.ok and result.success and result.metadata.correlationId == 'abc', 'Result.ok shape')
+    local failure = NightShift.Result.err(NightShift.Errors.Codes.VALIDATION, 'bad', { field = 'name' }, { correlationId = 'abc' })
+    check(not failure.ok and failure.error.code == 'VALIDATION_FAILED' and failure.details.field == 'name', 'Result.err shape')
+    check(NightShift.Errors.Codes.UNAVAILABLE_CAPABILITY == 'CAPABILITY_UNAVAILABLE', 'stable error codes')
+end
+
+do
+    local clock = NightShift.Clock.new({ now = function() return 0 end })
+    check(clock:timestamp() == '1970-01-01T00:00:00Z', 'UTC injected timestamp')
+    check(NightShift.Clock.utcTimestamp(1) == '1970-01-01T00:00:01Z', 'UTC formatting')
+end
+
+do
+    local entries = {}
+    local logger = NightShift.Logger.new({
+        clock = NightShift.Clock.new({ now = function() return 0 end }),
+        correlationId = 'client id/unsafe',
+        debugCategories = { allowed = true },
+        sink = function(entry) entries[#entries + 1] = entry end
+    })
+    local context = { account = 'hidden', nested = { password = 'hidden', visible = 'ok' } }
+    check(not logger:debug('blocked', 'ignored'), 'debug category filtering')
+    check(logger:debug('allowed', 'message', context), 'debug category allowed')
+    check(#entries == 1 and entries[1].timestamp == '1970-01-01T00:00:00Z', 'logger entry')
+    check(entries[1].context.account == '[REDACTED]' and entries[1].context.nested.password == '[REDACTED]' and entries[1].context.nested.visible == 'ok', 'recursive redaction')
+    check(context.account == 'hidden' and context.nested.password == 'hidden', 'redaction must not mutate input')
+end
+
+do
+    local logger = NightShift.Logger.new({ filter = function() error('filter failure') end, sink = function() error('sink failure') end })
+    check(not logger:info('test', 'safe'), 'filter failure isolation')
+    local logger2 = NightShift.Logger.new({ sink = function() error('sink failure') end })
+    check(logger2:info('test', 'safe'), 'sink failure isolation')
+end
