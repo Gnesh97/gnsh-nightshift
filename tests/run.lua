@@ -1,6 +1,6 @@
 local root = (... and ... ~= '') and (...) or '.'
 local function load(path) dofile(root .. '/' .. path) end
-load('shared/enums.lua'); load('shared/errors.lua'); load('shared/constants.lua'); load('server/bootstrap.lua')
+load('shared/enums.lua'); load('shared/errors.lua'); load('shared/constants.lua'); load('server/bootstrap.lua'); load('client/bootstrap.lua')
 
 local function check(value, message) assert(value, message) end
 
@@ -38,5 +38,22 @@ do
     check(cleaned and survived and instance.readiness == 'STOPPED', 'cleanup should be once and stop')
     check(instance.error and instance.error.code == 'CLEANUP_FAILED', 'cleanup failure should be structured')
 end
+
+do
+    local handler
+    AddEventHandler = function(_, callback) handler = callback end
+    GetCurrentResourceName = function() return 'gnsh-nightshift' end
+    local instance = NightShift.ServerBootstrap.new()
+    local cleaned = false
+    instance:onCleanup(function() cleaned = true end)
+    handler('other-resource')
+    check(instance.readiness == 'STARTING' and not cleaned, 'foreign stop must be ignored')
+    handler('gnsh-nightshift')
+    check(instance.readiness == 'STOPPED' and cleaned, 'own stop hook must clean up')
+    AddEventHandler = nil
+    GetCurrentResourceName = nil
+end
+
+check(NightShift.Client.readiness == 'READY', 'client lifecycle should initialize ready')
 
 print('NS-010 tests passed: ordered boot, stage failure short-circuit, stop cleanup')

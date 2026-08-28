@@ -10,6 +10,9 @@ end
 
 function Client:start()
     if not self.stopped then self.readiness = readiness.READY end
+    if NightShift.Client and NightShift.Client.instance == self then
+        NightShift.Client.readiness = self.readiness
+    end
     return self.readiness == readiness.READY
 end
 
@@ -38,3 +41,5 @@ NightShift.ClientBootstrap = Client
 NightShift.Client = NightShift.Client or {}
 NightShift.Client.instance = Client.new()
 NightShift.Client.readiness = readiness.STARTING
+NightShift.Client.instance:registerStopHook()
+NightShift.Client.instance:start()

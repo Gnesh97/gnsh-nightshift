@@ -1,17 +1,27 @@
 NightShift = NightShift or {}
 
 local readiness = NightShift.Enums.Readiness
-local defaultStages = {}
+local defaultStages = {
+    config = function()
+        return {
+            ok = false,
+            code = 'INVALID_CONFIG',
+            message = 'NightShift configuration is required before boot'
+        }
+    end
+}
 for _, stage in ipairs(NightShift.Constants.STAGES) do
-    defaultStages[stage] = function()
-        return { ok = true, deferred = true }
+    if not defaultStages[stage] then
+        defaultStages[stage] = function() return { ok = true, deferred = true } end
     end
 end
 
 local function failure(stage, reason)
     if type(reason) == 'table' and reason.code and reason.message then
-        reason.stage = reason.stage or stage
-        return reason
+        local copy = {}
+        for key, value in pairs(reason) do copy[key] = value end
+        copy.stage = copy.stage or stage
+        return copy
     end
     return NightShift.Errors.create('STAGE_FAILED', ('Required stage "%s" failed'):format(stage), {
         stage = stage,
@@ -36,6 +46,7 @@ function Bootstrap.new(options)
     for _, stage in ipairs(NightShift.Constants.STAGES) do
         instance.stages[stage] = stageInitializers[stage] or defaultStages[stage]
     end
+    instance:registerStopHook()
     return instance
 end
 
@@ -91,6 +102,10 @@ function Bootstrap:stop(resourceName)
             resource = resourceName,
             failures = cleanupErrors
         })
+    end
+    if NightShift.Server and NightShift.Server.instance == self then
+        NightShift.Server.readiness = self.readiness
+        NightShift.Server.error = self.error
     end
     return true, self.error
 end
