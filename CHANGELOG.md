@@ -13,7 +13,7 @@ All notable changes to NightShift are documented here.
 - **NS-054:** Added ordered, TTL-bound, atomic reservation locks and provider compensation with idempotent retries and booking-scoped release.
 - Review hardening now preserves all resources across incremental reservation calls and keeps release idempotent without touching other bookings.
 - Added `sql/011_booking_core.sql`, migration/bootstrap wiring, S05 contract coverage, and the S05 sprint report.
-- Local S05 exit-gate tests pass; the running FiveM client completed `Stopping → Creating script environments → Started resource gnsh-nightshift` with no resource-specific client errors, and the local player endpoint is healthy. The development config intentionally keeps `persistence=false`, so migration 011 and DB-backed booking operations remain deferred until persistence is explicitly enabled with the oxmysql adapter.
+- Local S05 exit-gate tests pass; the running FiveM client completed `Stopping → Creating script environments → Started resource gnsh-nightshift` with no resource-specific client errors, and the local player endpoint is healthy. The development config still defaults to `persistence=false`; the persistence-enabled runtime gate is recorded below.
 - Added a runtime-only `nightshift_persistence` convar opt-in that applies an immutable config copy and auto-wraps the oxmysql adapter when FiveM exposes it; the development default remains deferred and missing runtime database wiring still fails closed.
 - Added regression coverage for the runtime convar, oxmysql adapter normalization, and default bootstrap-to-migration wiring.
 - Added secret-free FiveM bootstrap diagnostics so resource logs identify `ready` versus typed startup failure, persistence status, database presence, and migration version.
@@ -21,6 +21,7 @@ All notable changes to NightShift are documented here.
 - Fixed FiveM runtime native lookup to call `GetConvar` and resolve `MySQL`/`exports` directly; replicated convars are now visible inside the resource sandbox instead of being mistaken for the development default.
 - Fixed the migration runner to resolve `LoadResourceFile`/`GetCurrentResourceName` through direct FiveM native lookup; SQL assets can now be loaded during the persistence bootstrap.
 - Fixed multi-statement SQL migrations by splitting quoted-safe statements before the final schema marker; oxmysql transactions no longer send adjacent `CREATE`/`ALTER` statements as one query.
+- Live persistence gate passed: after `setr nightshift_persistence true` and a controlled `restart gnsh-nightshift`, FXServer logged the migration applications and `NightShift server ready (persistence=true database=true migration=11)`. The connected `Gnesh` player endpoint remained healthy, and the latest FiveM client log contained no `gnsh-nightshift` script errors.
 
 ### S04 — Identity & Profiles
 

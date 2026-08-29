@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-29
 
-**Status:** PASS (local contract gate, live resource reload, and runtime persistence wiring); DB-backed runtime gate pending controlled convar restart
+**Status:** PASS (local contracts, live resource reload, runtime persistence wiring, and persistence-enabled DB migration smoke)
 
 **Scope:** NS-050, NS-051, NS-052, NS-053, NS-054 only
 
@@ -60,8 +60,9 @@
 - `info.json` lists `gnsh-nightshift`; the current FXServer log contains the resource environment/start lines and oxmysql’s MariaDB connection-success line.
 - `players.json` reports the connected local player `Gnesh`; endpoint reachability remains healthy.
 - The controlled console command `restart gnsh-nightshift` completed successfully (`Stopping resource` → `Creating script environments` → `Started resource`). The connected FiveM client log records the same reload and currently reports no gnsh-nightshift-specific script errors; `players.json` reports the connected local player.
-- The default development configuration has `features.persistence=false`, and bootstrap therefore defers the database/repository/service stages without an injected adapter. The restart proves resource reload health, but it intentionally does not apply migration 011 or exercise DB-backed booking operations. Enable persistence and wire the oxmysql adapter in a later runtime/config step before that gate.
-- The next controlled runtime gate is run from the open FXServer console with `setr nightshift_persistence true` followed by `restart gnsh-nightshift`; this is intentionally not marked complete until the server log confirms migration/DB bootstrap and the live client remains clean.
+- From the open FXServer console, `setr nightshift_persistence true` followed by `restart gnsh-nightshift` completed the persistence-enabled gate. The resource applied the registered migrations and ended with `info: NightShift server ready (persistence=true database=true migration=11)`.
+- The connected player endpoint remained healthy (`Gnesh`, endpoint `127.0.0.1`, ping `12` in the verification snapshot), and the latest FiveM client log (`C:\Users\Gnesh\AppData\Local\FiveM\FiveM.app\logs\CitizenFX_log_2026-08-29T132652.log`) recorded the resource reload without `SCRIPT ERROR`, `script error`, or `Failed to load script` entries for `gnsh-nightshift`.
+- The development configuration still defaults to `features.persistence=false`; the successful DB-backed run used the explicit runtime convar opt-in, so local development remains safe while the production-shaped migration/bootstrap path is now verified.
 
 ## Security / recovery / performance
 
@@ -73,7 +74,7 @@
 
 ## Known issues and deferred work
 
-- Migration `011_booking_core.sql` is applied by the normal runner after the `nightshift_persistence` opt-in; the current development-safe `persistence=false` setting defers it.
+- Migration `011_booking_core.sql` is now verified as applied by the normal runner after the `nightshift_persistence` opt-in. Fresh installs still require the opt-in (or an equivalent production configuration) because the development-safe default remains `persistence=false`.
 - The current service reports a typed failure if timeline persistence fails after the booking update (`statePersisted=true`); a DB transaction wrapper can make this cross-table transition atomic in a later persistence hardening task.
 - Public network handlers, client UI, provider-specific reservation/location adapters, payments, settlement, and live player-flow tests remain deferred to the planned later sprints.
 
@@ -87,8 +88,8 @@
 - [x] Local contract, parse, manifest, and diff verification.
 - [x] Controlled live resource restart and client reload smoke.
 - [x] Runtime persistence opt-in and oxmysql bootstrap wiring contracts.
-- [ ] Persistence-enabled migration and DB-backed booking runtime smoke.
+- [x] Persistence-enabled migration and DB-backed booking runtime smoke.
 
-**S05 Exit Gate: PASS for local contracts, resource reload, and runtime wiring. Stop before S06 until persistence-enabled migration/runtime smoke is confirmed.**
+**S05 Exit Gate: PASS for local contracts, resource reload, runtime wiring, and persistence-enabled migration/bootstrap smoke. S06 remains deferred until the next implementation request.**
 - Implementation and review remain root-owned per the user's explicit no-subagent override; no child task was dispatched.
 - `dev` is the active development branch; `main` remains the release branch and is not modified.
