@@ -16,7 +16,7 @@ local function copyValue(value, seen)
 end
 
 local function readConvar(name, fallback)
-    local getConvar = rawget(_G, 'GetConvar')
+    local getConvar = type(GetConvar) == 'function' and GetConvar or nil
     if type(getConvar) ~= 'function' then return fallback end
     local ok, value = pcall(getConvar, name, fallback)
     return ok and value or fallback
@@ -42,7 +42,7 @@ local function applyRuntimeConfig(source)
 end
 
 local function oxMySqlAvailable()
-    local mysql = rawget(_G, 'MySQL')
+    local mysql = type(MySQL) == 'table' and MySQL or nil
     if type(mysql) == 'table' then
         for _, operation in ipairs({ 'query', 'single', 'scalar', 'insert', 'update', 'transaction' }) do
             local target = rawget(mysql, operation)
@@ -51,14 +51,14 @@ local function oxMySqlAvailable()
             end
         end
     end
-    local exports = rawget(_G, 'exports')
-    if exports == nil then return false end
-    local ok, oxmysql = pcall(function() return exports.oxmysql end)
+    local runtimeExports = exports
+    if runtimeExports == nil then return false end
+    local ok, oxmysql = pcall(function() return runtimeExports.oxmysql end)
     return ok and oxmysql ~= nil
 end
 
 local function createRuntimeDatabaseAdapter()
-    if type(rawget(_G, 'GetConvar')) ~= 'function' or not oxMySqlAvailable() then return nil end
+    if type(GetConvar) ~= 'function' or not oxMySqlAvailable() then return nil end
     local database = NightShift.Database
     local factory = type(database) == 'table' and database.OxMySQL or nil
     if type(database) ~= 'table' or type(database.wrap) ~= 'function' or type(factory) ~= 'table' or type(factory.new) ~= 'function' then

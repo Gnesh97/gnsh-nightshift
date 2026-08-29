@@ -18,6 +18,7 @@ All notable changes to NightShift are documented here.
 - Added regression coverage for the runtime convar, oxmysql adapter normalization, and default bootstrap-to-migration wiring.
 - Added secret-free FiveM bootstrap diagnostics so resource logs identify `ready` versus typed startup failure, persistence status, database presence, and migration version.
 - Bootstrap diagnostics now include persistence/database/migration status directly in the console message, including an explicit `deferred` marker when the development DB gate is intentionally skipped.
+- Fixed FiveM runtime native lookup to call `GetConvar` and resolve `MySQL`/`exports` directly; replicated convars are now visible inside the resource sandbox instead of being mistaken for the development default.
 
 ### S04 — Identity & Profiles
 
