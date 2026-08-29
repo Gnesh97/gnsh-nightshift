@@ -16,6 +16,7 @@ All notable changes to NightShift are documented here.
 - Local S05 exit-gate tests pass; the running FiveM client completed `Stopping → Creating script environments → Started resource gnsh-nightshift` with no resource-specific client errors, and the local player endpoint is healthy. The development config intentionally keeps `persistence=false`, so migration 011 and DB-backed booking operations remain deferred until persistence is explicitly enabled with the oxmysql adapter.
 - Added a runtime-only `nightshift_persistence` convar opt-in that applies an immutable config copy and auto-wraps the oxmysql adapter when FiveM exposes it; the development default remains deferred and missing runtime database wiring still fails closed.
 - Added regression coverage for the runtime convar, oxmysql adapter normalization, and default bootstrap-to-migration wiring.
+- Added secret-free FiveM bootstrap diagnostics so resource logs identify `ready` versus typed startup failure, persistence status, database presence, and migration version.
 
 ### S04 — Identity & Profiles
 

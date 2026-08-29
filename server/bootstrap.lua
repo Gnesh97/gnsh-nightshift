@@ -443,12 +443,39 @@ Bootstrap.applyRuntimeConfig = applyRuntimeConfig
 Bootstrap.createRuntimeDatabaseAdapter = createRuntimeDatabaseAdapter
 NightShift.Server = NightShift.Server or {}
 NightShift.Server.readiness = readiness.STARTING
+
+local function logRuntimeBootstrap(ok, result)
+    if type(rawget(_G, 'GetCurrentResourceName')) ~= 'function' then return end
+    if type(NightShift.Logger) ~= 'table' or type(NightShift.Logger.new) ~= 'function' then return end
+    local logger = NightShift.Logger.new()
+    if ok then
+        local configResult = type(result) == 'table' and result.config or {}
+        local dbResult = type(result) == 'table' and result.db or {}
+        local config = configResult.config or configResult.value and configResult.value.config or {}
+        local migrations = dbResult.migrations or dbResult.value and dbResult.value.migrations or {}
+        local migrationValue = migrations.value or migrations
+        pcall(logger.info, logger, 'bootstrap', 'NightShift server ready', {
+            persistence = config.features and config.features.persistence == true,
+            database = dbResult.database ~= nil,
+            migrationVersion = migrationValue.currentVersion
+        })
+        return
+    end
+    local errorValue = type(result) == 'table' and (result.error or result) or {}
+    pcall(logger.error, logger, 'bootstrap', 'NightShift server startup failed', {
+        code = errorValue.code or 'BOOTSTRAP_FAILED',
+        stage = errorValue.stage,
+        message = errorValue.message
+    })
+end
+
 NightShift.Server.bootstrap = function(options, context)
     local instance = Bootstrap.new(options)
     NightShift.Server.instance = instance
     local ok, result = instance:boot(context)
     NightShift.Server.readiness = instance.readiness
     NightShift.Server.error = instance.error
+    logRuntimeBootstrap(ok, result)
     return ok, result
 end
 

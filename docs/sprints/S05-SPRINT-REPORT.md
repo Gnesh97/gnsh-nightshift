@@ -15,6 +15,7 @@
 - **NS-054 — Coordinated Reservations:** added ordered NPC/worker → location/room/vehicle → deposit locks, TTL expiry, atomic rollback, provider compensation, retry idempotence, and booking-scoped release.
 - **Schema/bootstrap integration:** registered migration `011_booking_core.sql`, extended booking/event repositories, and wired timeline, reservation, and booking services into the server bootstrap.
 - **Runtime persistence gate:** added the `nightshift_persistence` FiveM convar opt-in. When enabled, bootstrap clones the config immutably and wraps oxmysql only when the FiveM runtime exposes a usable driver; development defaults remain deferred and missing wiring fails closed.
+- **Runtime observability:** added secret-free `ready`/typed-failure bootstrap log entries with persistence, database, and migration-version context so a console restart is an auditable gate.
 - **Direct review hardening:** fixed numeric booking-ID release normalization, prevented one booking from scanning/releasing another booking’s locks, preserved all resources across incremental reservation calls, persisted quote/agreed timestamps, required a server catalog resolver, closed stale quote/accept races with expected versions, and rejected explicit trusted-verifier denials.
 
 ## Changed files
@@ -44,6 +45,7 @@
 
 - `C:\Users\Gnesh\AppData\Local\Programs\Lua\5.5.1\lua.exe tests/run.lua` passed NS-010/011, NS-020/023, NS-030..037, NS-040..043, and NS-050..054 contracts.
 - Runtime convar, oxmysql adapter normalization, and default bootstrap-to-migration wiring contracts pass with isolated FiveM/oxmysql doubles.
+- Runtime bootstrap diagnostics remain gated to FiveM (`GetCurrentResourceName`) and do not print credentials or raw provider payloads.
 - Lua parse check passed for all 67 Lua files.
 - FiveM manifest S05 load-order assertions passed.
 - `git diff --check` passed.
