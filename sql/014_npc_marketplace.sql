@@ -1,0 +1,29 @@
+ALTER TABLE nightshift_npc_profiles
+    ADD COLUMN IF NOT EXISTS role VARCHAR(16) NOT NULL DEFAULT 'WORKER',
+    ADD COLUMN IF NOT EXISTS profile_type VARCHAR(24) NOT NULL DEFAULT 'SEMI_PERSISTENT',
+    ADD COLUMN IF NOT EXISTS appearance_profile_ref VARCHAR(96) NULL,
+    ADD COLUMN IF NOT EXISTS budget_class TINYINT UNSIGNED NOT NULL DEFAULT 1,
+    ADD COLUMN IF NOT EXISTS price_class TINYINT UNSIGNED NOT NULL DEFAULT 1,
+    ADD COLUMN IF NOT EXISTS rating DECIMAL(3,2) NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS home_district VARCHAR(64) NULL,
+    ADD COLUMN IF NOT EXISTS active_district VARCHAR(64) NULL,
+    ADD COLUMN IF NOT EXISTS travel_mode VARCHAR(24) NOT NULL DEFAULT 'UNKNOWN',
+    ADD COLUMN IF NOT EXISTS generation_seed VARCHAR(96) NULL,
+    ADD COLUMN IF NOT EXISTS completed_bookings INT UNSIGNED NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS cancelled_bookings INT UNSIGNED NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS no_show_bookings INT UNSIGNED NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS last_active_at DATETIME(3) NULL,
+    ADD COLUMN IF NOT EXISTS expires_at DATETIME(3) NULL;
+
+ALTER TABLE nightshift_npc_workers
+    ADD COLUMN IF NOT EXISTS booking_id BIGINT UNSIGNED NULL,
+    ADD COLUMN IF NOT EXISTS reservation_key VARCHAR(200) NULL,
+    ADD COLUMN IF NOT EXISTS hold_until DATETIME(3) NULL,
+    ADD COLUMN IF NOT EXISTS expires_at DATETIME(3) NULL,
+    ADD COLUMN IF NOT EXISTS last_active_at DATETIME(3) NULL;
+
+CREATE INDEX IF NOT EXISTS idx_nightshift_npc_profile_marketplace
+    ON nightshift_npc_profiles (role, active_district, price_class, rating);
+
+CREATE INDEX IF NOT EXISTS idx_nightshift_npc_worker_state
+    ON nightshift_npc_workers (state, hold_until);

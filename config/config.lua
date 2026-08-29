@@ -11,6 +11,7 @@ NightShift.DefaultConfig = {
     },
     locations = NightShift.LocationConfig,
     npcProfiles = { { id = 'default_profile', availability = 'deferred' } },
+    npcProfileConfig = NightShift.NpcProfileConfig,
     serviceCatalog = NightShift.ServiceCatalogConfig,
     pricing = NightShift.PricingConfig,
     cancellation = NightShift.CancellationConfig,

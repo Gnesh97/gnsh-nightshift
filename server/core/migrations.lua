@@ -267,7 +267,8 @@ Migrations.DefinitionFiles = Migrations.DefinitionFiles or {
     '010_identity_profiles.sql',
     '011_booking_core.sql',
     '012_pricing_snapshots.sql',
-    '013_location_resolver.sql'
+    '013_location_resolver.sql',
+    '014_npc_marketplace.sql'
 }
 Migrations.checksum = checksum
 Migrations.Runner = Runner

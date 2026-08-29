@@ -24,3 +24,44 @@ NightShift.Enums.MeetingModes = NightShift.Enums.MeetingModes or {
     PICKUP = true,
     MEET_THERE = true
 }
+
+NightShift.Enums.NpcRoles = NightShift.Enums.NpcRoles or {
+    CUSTOMER = true,
+    WORKER = true
+}
+
+NightShift.Enums.NpcProfileTypes = NightShift.Enums.NpcProfileTypes or {
+    PERSISTENT = true,
+    SEMI_PERSISTENT = true
+}
+
+NightShift.Enums.NpcAvailability = NightShift.Enums.NpcAvailability or {
+    AVAILABLE = true,
+    RESERVED = true,
+    OCCUPIED = true,
+    AWAY = true,
+    OFFLINE = true,
+    EXPIRED = true
+}
+
+NightShift.Enums.NpcWorkerStates = NightShift.Enums.NpcWorkerStates or {
+    AVAILABLE = true,
+    RESERVED = true,
+    OCCUPIED = true,
+    EXPIRED = true
+}
+
+NightShift.Enums.NpcTravelModes = NightShift.Enums.NpcTravelModes or {
+    WALK = true,
+    VEHICLE = true,
+    TRANSIT = true,
+    UNKNOWN = true
+}
+
+NightShift.Enums.NpcPriceClasses = NightShift.Enums.NpcPriceClasses or {
+    [1] = true,
+    [2] = true,
+    [3] = true,
+    [4] = true,
+    [5] = true
+}

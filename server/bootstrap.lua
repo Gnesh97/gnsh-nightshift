@@ -207,6 +207,7 @@ local defaultStages = {
         local payment = options.paymentRepository
         local location = options.locationRepository
         local locationReservation = options.locationReservationRepository
+        local npcProfile = options.npcProfileRepository or options.npcProfilesRepository
         if type(context) == 'table' then
             worker = rawget(context, 'workerProfileRepository') or worker
             client = rawget(context, 'clientProfileRepository') or client
@@ -216,6 +217,7 @@ local defaultStages = {
             payment = rawget(context, 'paymentRepository') or payment
             location = rawget(context, 'locationRepository') or location
             locationReservation = rawget(context, 'locationReservationRepository') or locationReservation
+            npcProfile = rawget(context, 'npcProfileRepository') or rawget(context, 'npcProfilesRepository') or npcProfile
         end
         if worker == nil and NightShift.Repositories and NightShift.Repositories.WorkerProfile then
             local created, err = NightShift.Repositories.WorkerProfile.new({ db = database })
@@ -257,6 +259,11 @@ local defaultStages = {
             if not created then return err end
             locationReservation = created
         end
+        if npcProfile == nil and NightShift.Repositories and NightShift.Repositories.NpcProfile then
+            local created, err = NightShift.Repositories.NpcProfile.new({ db = database })
+            if not created then return err end
+            npcProfile = created
+        end
         if type(worker) ~= 'table' or type(client) ~= 'table' or type(booking) ~= 'table' or type(bookingEvent) ~= 'table' then
             return NightShift.Result.err(NightShift.Errors.Codes.REPOSITORY_INVALID, 'profile/booking repositories are unavailable', { stage = 'repositories' })
         end
@@ -268,7 +275,8 @@ local defaultStages = {
             deposit = deposit,
             payment = payment,
             location = location,
-            locationReservation = locationReservation
+            locationReservation = locationReservation,
+            npcProfile = npcProfile
         } }
     end,
     services = function(context, bootstrap)
@@ -339,9 +347,47 @@ local defaultStages = {
             if not created then return err end
             locationReservation = created
         end
+        local npcProfileGenerator = options.npcProfileGenerator or options.npcGenerator
+        if npcProfileGenerator == nil and NightShift.NpcProfileGenerator then
+            local created, err = NightShift.NpcProfileGenerator.new({
+                config = config.npcProfileConfig or NightShift.NpcProfileConfig,
+                repository = repositories.npcProfile,
+                clock = options.clock
+            })
+            if not created then return err end
+            npcProfileGenerator = created
+        end
+        local npcWorker = options.npcWorkerService or options.npcWorker
+        if npcWorker == nil and NightShift.NpcWorkerService then
+            local npcConfig = config.npcProfileConfig or NightShift.NpcProfileConfig or {}
+            local poolConfig = type(npcConfig.workerPool) == 'table' and npcConfig.workerPool or {}
+            local created, err = NightShift.NpcWorkerService.new({
+                generator = npcProfileGenerator,
+                repository = repositories.npcProfile,
+                locks = options.npcWorkerLocks,
+                clock = options.clock,
+                defaultTtl = options.npcWorkerReservationTtl or poolConfig.reservationTtl
+            })
+            if not created then return err end
+            npcWorker = created
+        end
+        local marketplace = options.marketplaceQueryService or options.marketplaceService
+        if marketplace == nil and NightShift.MarketplaceQueryService and npcWorker then
+            local npcConfig = config.npcProfileConfig or NightShift.NpcProfileConfig or {}
+            local marketplaceConfig = type(npcConfig.marketplace) == 'table' and npcConfig.marketplace or {}
+            local created, err = NightShift.MarketplaceQueryService.new({
+                workerService = npcWorker,
+                maxPageSize = options.marketplaceMaxPageSize or marketplaceConfig.maxPageSize or 50,
+                etaEstimator = options.marketplaceEtaEstimator,
+                clock = options.clock
+            })
+            if not created then return err end
+            marketplace = created
+        end
         if framework == nil or databaseDeferred then
             return { ok = true, deferred = true, reason = framework == nil and 'framework adapter not configured' or 'profile repositories deferred', services = {
-                location = locationService, locationReservation = locationReservation, vehicleLocation = vehicleLocation
+                location = locationService, locationReservation = locationReservation, vehicleLocation = vehicleLocation,
+                npcProfileGenerator = npcProfileGenerator, npcWorker = npcWorker, marketplace = marketplace
             } }
         end
         local catalog = options.serviceCatalog
@@ -402,7 +448,8 @@ local defaultStages = {
         end
         if not identity or not worker or not client or not permissions then
             return { ok = true, deferred = true, reason = 'identity/profile services unavailable', services = {
-                location = locationService, locationReservation = locationReservation, vehicleLocation = vehicleLocation
+                location = locationService, locationReservation = locationReservation, vehicleLocation = vehicleLocation,
+                npcProfileGenerator = npcProfileGenerator, npcWorker = npcWorker, marketplace = marketplace
             } }
         end
         local bookingTimeline = options.bookingTimelineService
@@ -447,7 +494,8 @@ local defaultStages = {
         end
         if not bookingTimeline or not reservationService or not booking then
             return { ok = true, deferred = true, reason = 'booking services unavailable', services = {
-                location = locationService, locationReservation = locationReservation, vehicleLocation = vehicleLocation
+                location = locationService, locationReservation = locationReservation, vehicleLocation = vehicleLocation,
+                npcProfileGenerator = npcProfileGenerator, npcWorker = npcWorker, marketplace = marketplace
             } }
         end
         return { ok = true, services = {
@@ -465,7 +513,10 @@ local defaultStages = {
             refund = refund,
             location = locationService,
             locationReservation = locationReservation,
-            vehicleLocation = vehicleLocation
+            vehicleLocation = vehicleLocation,
+            npcProfileGenerator = npcProfileGenerator,
+            npcWorker = npcWorker,
+            marketplace = marketplace
         } }
     end
 }

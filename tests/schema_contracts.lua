@@ -12,7 +12,8 @@ local files = {
     '010_identity_profiles.sql',
     '011_booking_core.sql',
     '012_pricing_snapshots.sql',
-    '013_location_resolver.sql'
+    '013_location_resolver.sql',
+    '014_npc_marketplace.sql'
 }
 
 local contents, allParts = {}, {}
@@ -45,4 +46,7 @@ check(contents['011_booking_core.sql']:find('client_type', 1, true) ~= nil, 'boo
 check(contents['011_booking_core.sql']:find('old_state', 1, true) ~= nil, 'booking timeline state columns missing')
 check(contents['013_location_resolver.sql']:find('location_type', 1, true) ~= nil, 'typed location columns missing')
 check(contents['013_location_resolver.sql']:find('active_key', 1, true) ~= nil, 'atomic location reservation key missing')
-check(#NightShift.Migrations.DefinitionFiles == 13, 'S07 location resolver migration must be registered')
+check(contents['014_npc_marketplace.sql']:find('profile_type', 1, true) ~= nil, 'NPC profile persistence type column missing')
+check(contents['014_npc_marketplace.sql']:find('price_class', 1, true) ~= nil, 'NPC marketplace price class column missing')
+check(contents['014_npc_marketplace.sql']:find('reservation_key', 1, true) ~= nil, 'NPC worker reservation key column missing')
+check(#NightShift.Migrations.DefinitionFiles == 14, 'S08 NPC marketplace migration must be registered')

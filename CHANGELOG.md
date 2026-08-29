@@ -4,6 +4,15 @@ All notable changes to NightShift are documented here.
 
 ## [Unreleased]
 
+### S08 — NPC Profile & Marketplace Core
+
+- **NS-080:** Added logical CUSTOMER/WORKER NPC profiles with persistent/semi-persistent lifetimes, sanitized aliases, appearance references, budget/price classes, bounded traits, district/travel availability, immutable copies, and versioned repository persistence.
+- **NS-081:** Added config-driven deterministic NPC profile generation with weighted archetypes, bounded trait ranges, seed reproducibility, appearance references, duplicate-alias suffixing, and completed-booking promotion to persistent profiles.
+- **NS-082:** Added logical worker pool availability with AVAILABLE/RESERVED/OCCUPIED/EXPIRED states, district/price/rating/travel filters, lock-then-database atomic reservation, booking ownership checks, release, and semi-persistent expiry.
+- **NS-083:** Added a privacy-safe, bounded marketplace read model with stable worker public IDs, pagination, filter validation, price-class/ETA preview fields, and no internal trait, appearance, or generation-seed leakage.
+- Added \`sql/014_npc_marketplace.sql\`, migration 014 registration, bootstrap/manifest wiring, and S08 contract coverage. Existing S07 migration history remains unchanged.
+- Local S08/full Lua contract suite, parser checks, and \`git diff --check\` pass. After push, restart \`gnsh-nightshift\` on the FiveM server and verify \`NightShift server ready (persistence=true database=true migration=14)\`; player marketplace UI/entity smoke remains the next runtime gate.
+
 ### S07 — Typed Locations, Atomic Location Holds & Vehicle Resolution
 
 - **NS-070:** Added server-owned typed location descriptors for motel/hotel rooms, properties, venue rooms, vehicles, configured locations, safe roadside points, and custom providers. Definitions normalize immutable world targets, access requirements, meeting modes, travel limits, blocked tags, availability, and reservability.
