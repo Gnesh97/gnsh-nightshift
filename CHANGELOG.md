@@ -22,6 +22,18 @@ All notable changes to NightShift are documented here.
 - **S02 review hardening:** rejected empty transactions and false health signals, protected migration file loading, added conditional versioned deletes, and expanded regression coverage for fail-closed persistence behavior.
 - Added the S02 sprint report; provider-specific adapters, aggregate repositories, domain services, jobs, and live database/FiveM smoke remain deferred to later sprints.
 
+### S03 — Provider / Adapter Layer
+
+- **NS-030:** Added a framework-neutral normalized identity/job/lifecycle contract with immutable DTOs, capability declarations, and isolated callback registration.
+- **NS-031/032/033/034:** Added independently injectable QBCore, Qbox, ESX Legacy, and Standalone adapters; provider objects never cross the normalized boundary, and ESX/Standalone expose explicit internal availability fallbacks.
+- **NS-035:** Added fail-closed money contracts and QBCore/Qbox/ESX/Standalone adapters for account validation, balance checks, add/remove, transfer compensation, reason propagation, and atomicity capability reporting.
+- **NS-036:** Added optional phone, housing, motel, dispatch, appearance, evidence, client target, and client notify interfaces with capability/health reporting and safe no-op/fallback behavior when integrations are absent.
+- **NS-037:** Added explicit/auto provider resolution, ambiguity detection, dependency validation, resolved capability diagnostics, and bootstrap adapter-stage integration.
+- Hardened provider callbacks and money operations against malformed payloads, nested job grades, false operation results, and dynamic availability errors.
+- Preserved adapter metatables when Result envelopes carry runtime provider instances, so resolved adapters retain their callable contracts without exposing native handles.
+- Added pure-Lua provider contract coverage and manifest/load-order verification; live FiveM/framework smoke remains deferred until a runtime is available.
+- Added the S03 sprint report; S04 identity/profile work is intentionally deferred.
+
 ### S00 — Specification Freeze
 
 - Initialized repository with `dev` as the development branch and `main` as the release branch.

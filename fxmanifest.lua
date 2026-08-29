@@ -8,6 +8,7 @@ shared_scripts {
     'shared/constants.lua',
     'shared/schemas.lua',
     'shared/validators.lua',
+    'shared/types/framework.lua',
     'config/providers.lua',
     'config/features.lua',
     'config/config.lua'
@@ -18,10 +19,32 @@ server_scripts {
     'server/core/clock.lua',
     'server/core/logger.lua',
     'server/core/event_bus.lua',
+    'server/adapters/framework/interface.lua',
+    'server/adapters/framework/qbcore.lua',
+    'server/adapters/framework/qbox.lua',
+    'server/adapters/framework/esx.lua',
+    'server/adapters/framework/standalone.lua',
+    'server/adapters/money/interface.lua',
+    'server/adapters/money/qbcore.lua',
+    'server/adapters/money/qbox.lua',
+    'server/adapters/money/esx.lua',
+    'server/adapters/money/standalone.lua',
+    'server/adapters/optional_base.lua',
+    'server/adapters/phone/interface.lua',
+    'server/adapters/housing/interface.lua',
+    'server/adapters/motel/interface.lua',
+    'server/adapters/dispatch/interface.lua',
+    'server/adapters/appearance/interface.lua',
+    'server/adapters/evidence/interface.lua',
+    'server/adapters/provider_resolver.lua',
     'server/adapters/database/interface.lua',
     'server/adapters/database/oxmysql.lua',
     'server/core/migrations.lua',
     'server/repositories/base_repository.lua',
     'server/bootstrap.lua'
 }
-client_script 'client/bootstrap.lua'
+client_scripts {
+    'client/bootstrap.lua',
+    'client/adapters/target/interface.lua',
+    'client/adapters/notify/interface.lua'
+}

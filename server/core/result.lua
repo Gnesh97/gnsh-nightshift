@@ -9,6 +9,8 @@ local function copy(value, seen)
     local output = {}
     seen[value] = output
     for key, item in pairs(value) do output[copy(key, seen)] = copy(item, seen) end
+    local metatable = getmetatable(value)
+    if metatable ~= nil then setmetatable(output, metatable) end
     return output
 end
 

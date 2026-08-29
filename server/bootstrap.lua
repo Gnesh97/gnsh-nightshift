@@ -14,6 +14,24 @@ local defaultStages = {
         if type(context) == 'table' and rawget(context, 'resolveProvider') ~= nil then
             resolver = rawget(context, 'resolveProvider')
         end
+        if resolver == nil and type(context) == 'table' and type(context.providerResolver) == 'table' and type(context.providerResolver.detectProvider) == 'function' then
+            resolver = function() return context.providerResolver:detectProvider() end
+        end
+        if resolver == nil and type(options.providerResolver) == 'table' and type(options.providerResolver.detectProvider) == 'function' then
+            resolver = function() return options.providerResolver:detectProvider() end
+        end
+        if resolver == nil and NightShift.ProviderResolver and type(NightShift.ProviderResolver.detectForConfig) == 'function' then
+            resolver = function(registry)
+                return NightShift.ProviderResolver.detectForConfig({
+                    registry = registry,
+                    frameworkAdapters = options.frameworkAdapters,
+                    frameworkFactories = options.frameworkFactories,
+                    frameworkOptions = options.frameworkOptions,
+                    resourceState = options.resourceState,
+                    resourceNames = options.resourceNames
+                })
+            end
+        end
         local normalized, err = NightShift.Validators.validateConfig(source, {
             registry = options.providerRegistry,
             resolveProvider = resolver
@@ -58,6 +76,39 @@ local defaultStages = {
         local migrationResult = runner:run()
         if type(migrationResult) ~= 'table' or not migrationResult.ok then return migrationResult end
         return { ok = true, database = adapter, migrations = migrationResult }
+    end,
+    adapters = function(context, bootstrap)
+        local options = bootstrap and bootstrap.options or {}
+        local configResult = bootstrap and bootstrap.results and bootstrap.results.config or {}
+        local config = configResult.config or configResult.value and configResult.value.config or NightShift.DefaultConfig
+        local resolver
+        if type(context) == 'table' and type(context.providerResolver) == 'table' then resolver = context.providerResolver end
+        if not resolver and type(options.providerResolverRuntime) == 'table' then resolver = options.providerResolverRuntime end
+        if not resolver and type(options.providerResolver) == 'table' then resolver = options.providerResolver end
+        if not resolver and NightShift.ProviderResolver and type(NightShift.ProviderResolver.new) == 'function' then
+            resolver = NightShift.ProviderResolver.new({
+                registry = options.providerRegistry,
+                frameworkAdapters = options.frameworkAdapters,
+                frameworkFactories = options.frameworkFactories,
+                frameworkOptions = options.frameworkOptions,
+                moneyAdapters = options.moneyAdapters,
+                moneyFactories = options.moneyFactories,
+                moneyOptions = options.moneyOptions,
+                optionalProviders = options.optionalProviders,
+                optionalFactories = options.optionalFactories,
+                resourceState = options.resourceState,
+                resourceNames = options.resourceNames,
+                dependencies = options.providerDependencies,
+                requireResourceState = options.requireResourceState,
+                logger = options.logger
+            })
+        end
+        if not resolver or type(resolver.resolve) ~= 'function' then
+            return { ok = true, deferred = true, reason = 'provider resolver not configured' }
+        end
+        local resolved = resolver:resolve(config, context)
+        if type(resolved) ~= 'table' or resolved.ok ~= true then return resolved end
+        return { ok = true, providers = resolved.value, capabilities = resolved.value and resolved.value.capabilities, diagnostics = resolved.value and resolved.value.diagnostics }
     end
 }
 for _, stage in ipairs(NightShift.Constants.STAGES) do
