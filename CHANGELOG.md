@@ -13,7 +13,7 @@ All notable changes to NightShift are documented here.
 - **NS-054:** Added ordered, TTL-bound, atomic reservation locks and provider compensation with idempotent retries and booking-scoped release.
 - Review hardening now preserves all resources across incremental reservation calls and keeps release idempotent without touching other bookings.
 - Added `sql/011_booking_core.sql`, migration/bootstrap wiring, S05 contract coverage, and the S05 sprint report.
-- Local S05 exit-gate tests pass; the already-running FiveM instance shows `gnsh-nightshift` loaded and oxmysql connected. A controlled `restart gnsh-nightshift` is still required to apply migration 011 and exercise the new checkout in the live runtime.
+- Local S05 exit-gate tests pass; the running FiveM client completed `Stopping → Creating script environments → Started resource gnsh-nightshift` with no resource-specific client errors, and the local player endpoint is healthy. The development config intentionally keeps `persistence=false`, so migration 011 and DB-backed booking operations remain deferred until persistence is explicitly enabled with the oxmysql adapter.
 
 ### S04 — Identity & Profiles
 
