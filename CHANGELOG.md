@@ -20,6 +20,7 @@ All notable changes to NightShift are documented here.
 - Bootstrap diagnostics now include persistence/database/migration status directly in the console message, including an explicit `deferred` marker when the development DB gate is intentionally skipped.
 - Fixed FiveM runtime native lookup to call `GetConvar` and resolve `MySQL`/`exports` directly; replicated convars are now visible inside the resource sandbox instead of being mistaken for the development default.
 - Fixed the migration runner to resolve `LoadResourceFile`/`GetCurrentResourceName` through direct FiveM native lookup; SQL assets can now be loaded during the persistence bootstrap.
+- Fixed multi-statement SQL migrations by splitting quoted-safe statements before the final schema marker; oxmysql transactions no longer send adjacent `CREATE`/`ALTER` statements as one query.
 
 ### S04 — Identity & Profiles
 

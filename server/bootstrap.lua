@@ -464,11 +464,12 @@ local function logRuntimeBootstrap(ok, result)
         })
         return
     end
-    local errorValue = type(result) == 'table' and (result.error or result) or {}
+    local resultValue = type(result) == 'table' and result or {}
+    local errorValue = resultValue.error or resultValue
     if type(errorValue) ~= 'table' then errorValue = {} end
-    local code = errorValue.code or 'BOOTSTRAP_FAILED'
+    local code = resultValue.code or errorValue.code or 'BOOTSTRAP_FAILED'
     local details = type(errorValue.details) == 'table' and errorValue.details or {}
-    local stage = errorValue.stage or details.stage or 'unknown'
+    local stage = resultValue.stage or errorValue.stage or details.stage or 'unknown'
     pcall(logger.error, logger, 'bootstrap', ('NightShift server startup failed (code=%s stage=%s)'):format(tostring(code), tostring(stage)), {
         code = code,
         stage = errorValue.stage,

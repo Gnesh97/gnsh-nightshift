@@ -37,6 +37,44 @@ local function invalid(message, details)
     return Result.err(Codes.MIGRATION_INVALID, message, details)
 end
 
+local function splitStatements(sql)
+    local statements, buffer = {}, {}
+    local quote, escaped = nil, false
+    local index = 1
+    while index <= #sql do
+        local character = sql:sub(index, index)
+        if quote ~= nil then
+            buffer[#buffer + 1] = character
+            if escaped then
+                escaped = false
+            elseif character == '\\' then
+                escaped = true
+            elseif character == quote then
+                local nextCharacter = sql:sub(index + 1, index + 1)
+                if nextCharacter == quote then
+                    buffer[#buffer + 1] = nextCharacter
+                    index = index + 1
+                else
+                    quote = nil
+                end
+            end
+        elseif character == "'" or character == '"' or character == '`' then
+            quote = character
+            buffer[#buffer + 1] = character
+        elseif character == ';' then
+            local statement = table.concat(buffer):match('^%s*(.-)%s*$')
+            if statement and statement ~= '' then statements[#statements + 1] = statement end
+            buffer = {}
+        else
+            buffer[#buffer + 1] = character
+        end
+        index = index + 1
+    end
+    local statement = table.concat(buffer):match('^%s*(.-)%s*$')
+    if statement and statement ~= '' then statements[#statements + 1] = statement end
+    return statements
+end
+
 local function defaultLoadFile(path)
     local loadResourceFile = type(LoadResourceFile) == 'function' and LoadResourceFile or nil
     local getResourceName = type(GetCurrentResourceName) == 'function' and GetCurrentResourceName or nil
@@ -116,13 +154,22 @@ function Runner:_readApplied()
 end
 
 function Runner:_apply(definition)
-    local result = self._db:transaction({
-        { query = definition.sql, parameters = {} },
-        {
-            query = 'INSERT INTO nightshift_schema_migrations (version, name, checksum) VALUES (?, ?, ?)',
-            parameters = { definition.version, definition.name, definition.checksum }
-        }
-    })
+    local statements = splitStatements(definition.sql)
+    if #statements == 0 then
+        return Result.err(Codes.MIGRATION_APPLY_FAILED, 'migration SQL contains no executable statements', {
+            version = definition.version,
+            name = definition.name
+        })
+    end
+    local transaction = {}
+    for _, statement in ipairs(statements) do
+        transaction[#transaction + 1] = { query = statement, parameters = {} }
+    end
+    transaction[#transaction + 1] = {
+        query = 'INSERT INTO nightshift_schema_migrations (version, name, checksum) VALUES (?, ?, ?)',
+        parameters = { definition.version, definition.name, definition.checksum }
+    }
+    local result = self._db:transaction(transaction)
     if type(result) ~= 'table' or not result.ok then
         return Result.err(Codes.MIGRATION_APPLY_FAILED, 'migration transaction failed', {
             version = definition.version,

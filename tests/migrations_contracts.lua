@@ -16,7 +16,7 @@ local function newDatabase(initialRows, missingSchema)
     function db:transaction(statements)
         self.transactions[#self.transactions + 1] = statements
         self.missingSchema = false
-        local marker = statements[2] and statements[2].parameters or {}
+        local marker = statements[#statements] and statements[#statements].parameters or {}
         self.rows[#self.rows + 1] = {
             version = marker.version or marker[1],
             name = marker.name or marker[2],
@@ -46,6 +46,23 @@ do
     check(#entries == 2, 'applied migrations must be logged')
     local repeatResult = runner:run()
     check(repeatResult.ok and repeatResult.value.currentVersion == 2 and #repeatResult.value.applied == 0, 'repeat boot must be idempotent')
+end
+
+do
+    local db = newDatabase({}, true)
+    local runner = NightShift.Migrations.Runner.new({
+        db = db,
+        migrations = { {
+            version = 1,
+            name = '001_multi.sql',
+            sql = "CREATE TABLE first_table (label VARCHAR(16) DEFAULT 'a;b'); CREATE TABLE second_table (id INT);"
+        } }
+    })
+    local result = runner:run()
+    local transaction = db.transactions[1]
+    check(result.ok and transaction and #transaction == 3, 'multi-statement migrations must be split before the marker')
+    check(transaction[1].query:find("DEFAULT 'a;b'", 1, true) ~= nil and transaction[2].query:find('second_table', 1, true) ~= nil, 'migration statement splitting must preserve quoted semicolons')
+    check(transaction[3].query:find('nightshift_schema_migrations', 1, true) ~= nil, 'migration marker must remain the final transaction statement')
 end
 
 do

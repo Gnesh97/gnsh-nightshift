@@ -18,6 +18,7 @@
 - **Runtime observability:** added secret-free `ready`/typed-failure bootstrap log entries with persistence, database, and migration-version context so a console restart is an auditable gate.
 - **Runtime lookup fix:** direct FiveM native/global resolution is used for `GetConvar`, `MySQL`, and `exports`; replicated convars are no longer hidden by `_G` raw-table lookup behavior.
 - **Migration loader fix:** `LoadResourceFile` and `GetCurrentResourceName` now use direct FiveM native lookup, allowing the registered SQL assets to reach the runner in the live resource sandbox.
+- **Migration transaction fix:** semicolon-delimited SQL is split with quote awareness before the final marker insert, matching oxmysql transaction semantics for the multi-table migrations.
 - **Direct review hardening:** fixed numeric booking-ID release normalization, prevented one booking from scanning/releasing another booking’s locks, preserved all resources across incremental reservation calls, persisted quote/agreed timestamps, required a server catalog resolver, closed stale quote/accept races with expected versions, and rejected explicit trusted-verifier denials.
 
 ## Changed files
