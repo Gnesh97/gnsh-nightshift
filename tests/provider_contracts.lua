@@ -136,17 +136,18 @@ end
 
 do
     local balance = 100
+    local observedKey
     local money = NightShift.MoneyInterface.new({
-        name = 'fixture', accounts = { cash = true }, capabilities = { atomicTransfer = false },
+        name = 'fixture', accounts = { cash = true }, capabilities = { atomicTransfer = false, idempotency = true },
         has = function(_, _, amount) return balance >= amount end,
-        remove = function(_, _, amount) balance = balance - amount; return true end,
-        add = function(_, _, amount) balance = balance + amount; return true end
+        remove = function(_, _, amount, _, key) observedKey = key; balance = balance - amount; return true end,
+        add = function(_, _, amount, _, key) observedKey = key; balance = balance + amount; return true end
     })
     check(ok(money:has(1, 'cash', 50)) == true, 'money has')
     err(money:has(1, 'bank', 10), 'MONEY_UNSUPPORTED_ACCOUNT', 'unsupported account should fail')
     err(money:remove(1, 'cash', 150), 'MONEY_INSUFFICIENT_FUNDS', 'insufficient funds should fail')
-    check(ok(money:remove(1, 'cash', 40)).amount == 40 and balance == 60, 'money remove')
-    check(ok(money:add(1, 'cash', 20)).amount == 20 and balance == 80, 'money add')
+    check(ok(money:remove(1, 'cash', 40, 'test debit', 'deposit:test')).amount == 40 and balance == 60 and observedKey == 'deposit:test', 'money remove')
+    check(ok(money:add(1, 'cash', 20, 'test credit', 'refund:test')).amount == 20 and balance == 80 and observedKey == 'refund:test', 'money add')
     check(money:getCapabilities().atomicTransfer == false, 'money capability declaration')
 end
 

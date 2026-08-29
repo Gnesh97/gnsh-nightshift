@@ -10,7 +10,8 @@ local files = {
     '008_relationships.sql',
     '009_indexes.sql',
     '010_identity_profiles.sql',
-    '011_booking_core.sql'
+    '011_booking_core.sql',
+    '012_pricing_snapshots.sql'
 }
 
 local contents, allParts = {}, {}
@@ -41,4 +42,4 @@ check(contents['010_identity_profiles.sql']:find('professionalism', 1, true) ~= 
 check(contents['010_identity_profiles.sql']:find('deposit_risk_score', 1, true) ~= nil, 'client deposit risk fields missing')
 check(contents['011_booking_core.sql']:find('client_type', 1, true) ~= nil, 'booking participant columns missing')
 check(contents['011_booking_core.sql']:find('old_state', 1, true) ~= nil, 'booking timeline state columns missing')
-check(#NightShift.Migrations.DefinitionFiles == 11, 'S05 booking migration must be registered')
+check(#NightShift.Migrations.DefinitionFiles == 12, 'S06 pricing snapshot migration must be registered')

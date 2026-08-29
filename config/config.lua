@@ -5,12 +5,15 @@ NightShift = NightShift or {}
 NightShift.DefaultConfig = {
     environment = 'development',
     provider = { mode = 'explicit', name = 'standalone' },
-    features = { physicalNpc = false, deposits = false, demand = false, heat = false, persistence = false },
+    features = { serviceCatalog = true, pricing = true, payments = false, refunds = true, physicalNpc = false, deposits = false, demand = false, heat = false, persistence = false },
     servicePackages = {
         { id = 'standard', price = 100, duration = 30, locationIds = { 'configured_default' } }
     },
     locations = { { id = 'configured_default', category = 'configured' } },
     npcProfiles = { { id = 'default_profile', availability = 'deferred' } },
+    serviceCatalog = NightShift.ServiceCatalogConfig,
+    pricing = NightShift.PricingConfig,
+    cancellation = NightShift.CancellationConfig,
     demand = { min = 0, max = 100 },
     heat = { min = 0, max = 100 }
 }

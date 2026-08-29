@@ -11,6 +11,9 @@ shared_scripts {
     'shared/types/framework.lua',
     'config/providers.lua',
     'config/features.lua',
+    'config/services.lua',
+    'config/pricing.lua',
+    'config/cancellation.lua',
     'config/config.lua'
 }
 
@@ -57,7 +60,16 @@ server_scripts {
     'server/core/reservations.lua',
     'server/services/booking_timeline_service.lua',
     'server/services/booking_reservation_service.lua',
+    'server/domain/price_quote.lua',
+    'server/services/service_catalog.lua',
+    'server/services/pricing_service.lua',
     'server/services/booking_service.lua',
+    'server/domain/deposit.lua',
+    'server/repositories/deposit_repository.lua',
+    'server/services/deposit_service.lua',
+    'server/repositories/payment_repository.lua',
+    'server/services/settlement_service.lua',
+    'server/services/refund_service.lua',
     'server/bootstrap.lua'
 }
 client_scripts {

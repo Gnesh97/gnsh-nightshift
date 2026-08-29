@@ -115,7 +115,7 @@ end
 local function normalizePrice(value, field)
     if value == nil then return nil end
     if type(value) ~= 'table' then return nil, invalid(field .. ' must be a snapshot table', { field = field }) end
-    local allowed = { amountMinor = true, amount = true, currency = true, quotedAt = true, quoted_at = true, agreedAt = true, agreed_at = true, expiresAt = true, expires_at = true }
+    local allowed = { amountMinor = true, amount = true, currency = true, quotedAt = true, quoted_at = true, agreedAt = true, agreed_at = true, expiresAt = true, expires_at = true, quoteId = true, quote_id = true, bookingId = true, booking_id = true }
     for key in pairs(value) do
         if not allowed[key] then return nil, invalid(field .. ' field is not allowlisted', { field = field .. '.' .. tostring(key) }) end
     end
@@ -126,6 +126,16 @@ local function normalizePrice(value, field)
     local currency, currencyError = normalizeCurrency(value.currency, field .. '.currency')
     if not currency then return nil, currencyError end
     local output = { amountMinor = amount, currency = currency }
+    local quoteId = value.quoteId or value.quote_id
+    if quoteId ~= nil then
+        if not text(quoteId, 128) then return nil, invalid(field .. '.quoteId is invalid', { field = field .. '.quoteId' }) end
+        output.quoteId = quoteId
+    end
+    local bookingId = value.bookingId or value.booking_id
+    if bookingId ~= nil then
+        if not integer(bookingId, 1) and not text(bookingId, 160) then return nil, invalid(field .. '.bookingId is invalid', { field = field .. '.bookingId' }) end
+        output.bookingId = bookingId
+    end
     for _, item in ipairs({ { 'quotedAt', 'quoted_at' }, { 'agreedAt', 'agreed_at' }, { 'expiresAt', 'expires_at' } }) do
         local name, alias = item[1], item[2]
         local timestamp, timestampError = normalizeTimestamp(value[name] == nil and value[alias] or value[name], field .. '.' .. name)
@@ -277,9 +287,12 @@ function Booking.toRow(booking)
         quote_minor = quote and quote.amountMinor or nil,
         quote_currency = quote and quote.currency or nil,
         quoted_at = quote and quote.quotedAt or nil,
+        quote_id = quote and quote.quoteId or nil,
+        quote_expires_at = quote and quote.expiresAt or nil,
         agreed_price_minor = agreed and agreed.amountMinor or nil,
         agreed_currency = agreed and agreed.currency or nil,
         agreed_at = agreed and agreed.agreedAt or nil,
+        agreed_quote_id = agreed and agreed.quoteId or nil,
         price_minor = price,
         currency = currency,
         status = value.status,
@@ -316,8 +329,8 @@ function Booking.fromRow(row)
         meetingMode = row.meeting_mode or row.mode or 'IN_PERSON',
         locationType = row.location_type or row.locationType or (locationRef and 'LEGACY' or nil),
         locationRef = locationRef,
-        quote = row.quote_minor ~= nil and { amountMinor = row.quote_minor, currency = row.quote_currency or row.currency, quotedAt = row.quoted_at } or nil,
-        agreedPrice = row.agreed_price_minor ~= nil and { amountMinor = row.agreed_price_minor, currency = row.agreed_currency or row.currency, agreedAt = row.agreed_at } or nil,
+        quote = row.quote_minor ~= nil and { amountMinor = row.quote_minor, currency = row.quote_currency or row.currency, quotedAt = row.quoted_at, quoteId = row.quote_id, expiresAt = row.quote_expires_at } or nil,
+        agreedPrice = row.agreed_price_minor ~= nil and { amountMinor = row.agreed_price_minor, currency = row.agreed_currency or row.currency, agreedAt = row.agreed_at, quoteId = row.agreed_quote_id } or nil,
         scheduledAt = row.scheduled_at or row.scheduledAt,
         startAt = row.started_at or row.start_at or row.startAt,
         endAt = row.ended_at or row.end_at or row.endAt,

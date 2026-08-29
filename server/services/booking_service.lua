@@ -4,6 +4,7 @@ local Result = NightShift.Result
 local Codes = NightShift.Errors.Codes
 local Domain = NightShift.Domain.Booking
 local StateMachine = NightShift.BookingStateMachine
+local PriceQuote = NightShift.Domain and NightShift.Domain.PriceQuote
 
 local Service = {}
 Service.__index = Service
@@ -68,6 +69,36 @@ local function expectedVersion(value)
     return value
 end
 
+local function packageSnapshot(value)
+    if type(value) ~= 'table' then return nil, invalid('service package resolver returned no package') end
+    local id = value.id or value.key or value.name
+    local price = value.priceMinor
+    if price == nil then price = value.basePriceMinor end
+    if price == nil then price = value.price end
+    local duration = value.durationMinutes
+    if duration == nil then duration = value.duration end
+    local currency = type(value.currency) == 'string' and value.currency:upper() or 'USD'
+    if not text(id, 96) or not integer(price, 1) or not integer(duration, 1) or currency:match('^[A-Z][A-Z][A-Z]$') == nil then
+        return nil, Result.err(Codes.BOOKING_INVALID, 'service package snapshot is invalid')
+    end
+    return { id = id, priceMinor = price, durationMinutes = duration, currency = currency }
+end
+
+local function quoteSnapshot(value, bookingId)
+    if type(value) ~= 'table' then return nil, Result.err(Codes.BOOKING_INVALID, 'quote resolver returned no quote') end
+    local amount = integer(value.amountMinor or value.amount, 1)
+    local currency = type(value.currency) == 'string' and value.currency:upper() or nil
+    if not amount or not currency or currency:match('^[A-Z][A-Z][A-Z]$') == nil then
+        return nil, Result.err(Codes.QUOTE_INVALID, 'quote snapshot is invalid')
+    end
+    local output = { amountMinor = amount, currency = currency, quotedAt = value.quotedAt or value.issuedAt, expiresAt = value.expiresAt }
+    local quoteId = value.quoteId or value.id
+    if quoteId ~= nil then output.quoteId = quoteId end
+    if bookingId ~= nil then output.bookingId = bookingId end
+    if output.quotedAt == nil then output.quotedAt = timestamp(nil) end
+    return output
+end
+
 function Service.new(options)
     options = options or {}
     local repository = options.repository or options.bookingRepository
@@ -86,7 +117,7 @@ function Service.new(options)
         _timeline = timeline,
         _reservation = options.reservationService,
         _catalogResolver = options.catalogResolver or options.resolveServicePackage,
-        _quote = options.quoteResolver or options.resolveQuote,
+        _quote = options.quoteResolver or options.resolveQuote or options.pricingService,
         _authorize = options.authorize,
         _permission = options.permissionService,
         _clock = options.clock
@@ -130,8 +161,12 @@ end
 
 function Service:_catalog(id, input)
     if not text(id, 96) then return nil, Result.err(Codes.BOOKING_INVALID, 'service package ID is required') end
-    if type(self._catalogResolver) == 'function' then
-        local ok, result = pcall(self._catalogResolver, id, copy(input))
+    local resolver = self._catalogResolver
+    if type(resolver) == 'table' and type(resolver.resolve) == 'function' then
+        resolver = function(packageId, request) return self._catalogResolver:resolve(packageId, request) end
+    end
+    if type(resolver) == 'function' then
+        local ok, result = pcall(resolver, id, copy(input))
         if not ok then return nil, Result.err(Codes.BOOKING_INVALID, 'service package resolver failed') end
         local value, errorResult = unwrap(result, Codes.BOOKING_INVALID)
         if not value then return nil, errorResult end
@@ -145,8 +180,11 @@ function Service:createDraft(actor, input)
     local normalizedActor, actorError = actorValue(actor)
     if not normalizedActor then return actorError end
     local packageInput = input.servicePackage
+    if packageInput == nil then packageInput = input.servicePackageId or input.packageId end
     local packageId = type(packageInput) == 'table' and packageInput.id or packageInput
     local package, packageError = self:_catalog(packageId, input)
+    if not package then return packageError end
+    package, packageError = packageSnapshot(package)
     if not package then return packageError end
     local idempotencyKey = input.idempotencyKey
     if idempotencyKey == nil then idempotencyKey = ('draft:%s:%s'):format(normalizedActor.ref, timestamp(self._clock)) end
@@ -250,8 +288,22 @@ function Service:applyQuote(actor, id, request, expected)
     local owner, ownerError = self:_requireOwner(actor, booking, 'quote')
     if not owner then return ownerError end
     local quote
-    if type(self._quote) == 'function' then
-        local ok, result = pcall(self._quote, copy(booking), copy(request), owner)
+    local resolver = self._quote
+    if type(resolver) == 'table' and type(resolver.quote) == 'function' then
+        resolver = function(current, input, currentOwner)
+            local request = copy(input or {})
+            request.booking = current
+            request.servicePackageId = current.servicePackage and current.servicePackage.id
+            request.meetingMode = current.meetingMode
+            request.locationRef = current.locationRef
+            request.clientReputation = request.clientReputation or request.reputation
+            request.context = copy(input or {})
+            request.actor = currentOwner
+            return self._quote:quote(request)
+        end
+    end
+    if type(resolver) == 'function' then
+        local ok, result = pcall(resolver, copy(booking), copy(request), owner)
         if not ok then return Result.err(Codes.BOOKING_INVALID, 'quote resolver failed') end
         quote, ownerError = unwrap(result, Codes.BOOKING_INVALID)
         if not quote then return ownerError end
@@ -259,9 +311,8 @@ function Service:applyQuote(actor, id, request, expected)
         local package = booking.servicePackage
         quote = { amountMinor = package.priceMinor, currency = package.currency or 'USD' }
     end
-    if type(quote) ~= 'table' then return Result.err(Codes.BOOKING_INVALID, 'quote resolver returned no quote') end
-    quote = copy(quote)
-    quote.quotedAt = quote.quotedAt or timestamp(self._clock)
+    quote, ownerError = quoteSnapshot(quote, booking.id)
+    if not quote then return ownerError end
     return self:_transition(owner, id, 'QUOTED', expected or booking.version, { reason = 'quote-created' }, { quote = quote })
 end
 
@@ -274,7 +325,34 @@ function Service:accept(actor, id, expected)
     if not booking then return bookingError end
     if type(booking.quote) ~= 'table' then return Result.err(Codes.BOOKING_INVALID, 'booking must have a quote before acceptance') end
     local agreed = booking.quote and copy(booking.quote) or nil
-    if agreed then agreed.agreedAt = agreed.agreedAt or timestamp(self._clock) end
+    if agreed then
+        if PriceQuote and type(PriceQuote.new) == 'function' then
+            local quote = PriceQuote.new({
+                id = agreed.quoteId or ('booking:%s:quote'):format(tostring(booking.id)),
+                bookingId = booking.id,
+                amountMinor = agreed.amountMinor,
+                currency = agreed.currency,
+                issuedAt = agreed.quotedAt or timestamp(self._clock),
+                expiresAt = agreed.expiresAt
+            })
+            if type(quote) == 'table' and type(quote.accept) == 'function' then
+                local frozen, freezeError = quote:accept(timestamp(self._clock), booking.id)
+                if not frozen then return freezeError end
+                local snapshot = frozen.value and frozen.value.acceptedSnapshot or frozen.value
+                agreed = {
+                    amountMinor = snapshot.amountMinor,
+                    currency = snapshot.currency,
+                    agreedAt = snapshot.acceptedAt or timestamp(self._clock),
+                    quoteId = snapshot.quoteId,
+                    bookingId = booking.id
+                }
+            else
+                return Result.err(Codes.QUOTE_INVALID, 'booking quote could not be normalized')
+            end
+        else
+            agreed.agreedAt = agreed.agreedAt or timestamp(self._clock)
+        end
+    end
     return self:_transition(actor, id, 'ACCEPTED', expected or booking.version, { reason = 'offer-accepted' }, agreed and { agreedPrice = agreed } or nil)
 end
 
@@ -342,6 +420,14 @@ function Service:interrupt(actor, id, expected, reason)
     if transitioned.ok and self._reservation and type(self._reservation.release) == 'function' then self._reservation:release(tostring(id)) end
     return transitioned
 end
+
+function Service:get(id)
+    local booking, errorResult = self:_get(id)
+    if not booking then return errorResult end
+    return Result.ok(booking)
+end
+
+Service.find = Service.get
 
 Service.create = Service.createDraft
 Service.quote = Service.applyQuote

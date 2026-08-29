@@ -203,11 +203,15 @@ local defaultStages = {
         local client = options.clientProfileRepository
         local booking = options.bookingRepository
         local bookingEvent = options.bookingEventRepository
+        local deposit = options.depositRepository
+        local payment = options.paymentRepository
         if type(context) == 'table' then
             worker = rawget(context, 'workerProfileRepository') or worker
             client = rawget(context, 'clientProfileRepository') or client
             booking = rawget(context, 'bookingRepository') or booking
             bookingEvent = rawget(context, 'bookingEventRepository') or bookingEvent
+            deposit = rawget(context, 'depositRepository') or deposit
+            payment = rawget(context, 'paymentRepository') or payment
         end
         if worker == nil and NightShift.Repositories and NightShift.Repositories.WorkerProfile then
             local created, err = NightShift.Repositories.WorkerProfile.new({ db = database })
@@ -229,6 +233,16 @@ local defaultStages = {
             if not created then return err end
             bookingEvent = created
         end
+        if deposit == nil and NightShift.Repositories and NightShift.Repositories.Deposit then
+            local created, err = NightShift.Repositories.Deposit.new({ db = database })
+            if not created then return err end
+            deposit = created
+        end
+        if payment == nil and NightShift.Repositories and NightShift.Repositories.Payment then
+            local created, err = NightShift.Repositories.Payment.new({ db = database })
+            if not created then return err end
+            payment = created
+        end
         if type(worker) ~= 'table' or type(client) ~= 'table' or type(booking) ~= 'table' or type(bookingEvent) ~= 'table' then
             return NightShift.Result.err(NightShift.Errors.Codes.REPOSITORY_INVALID, 'profile/booking repositories are unavailable', { stage = 'repositories' })
         end
@@ -236,7 +250,9 @@ local defaultStages = {
             workerProfile = worker,
             clientProfile = client,
             booking = booking,
-            bookingEvent = bookingEvent
+            bookingEvent = bookingEvent,
+            deposit = deposit,
+            payment = payment
         } }
     end,
     services = function(context, bootstrap)
@@ -245,12 +261,43 @@ local defaultStages = {
         local repositoryResult = bootstrap and bootstrap.results and bootstrap.results.repositories or {}
         local providers = adapterResult.providers or adapterResult.value and adapterResult.value.providers or {}
         local repositories = repositoryResult.repositories or repositoryResult.value and repositoryResult.value.repositories or {}
+        local configResult = bootstrap and bootstrap.results and bootstrap.results.config or {}
+        local config = configResult.config or configResult.value and configResult.value.config or NightShift.DefaultConfig
+        local features = type(config.features) == 'table' and config.features or {}
         local framework = options.frameworkAdapter or providers.framework
+        local money = options.moneyAdapter or options.money or providers.money
         if type(context) == 'table' then framework = rawget(context, 'frameworkAdapter') or framework end
+        if type(context) == 'table' then money = rawget(context, 'moneyAdapter') or rawget(context, 'money') or money end
         local databaseDeferred = repositoryResult.deferred == true
         if framework == nil or databaseDeferred then
             return { ok = true, deferred = true, reason = framework == nil and 'framework adapter not configured' or 'profile repositories deferred' }
         end
+        local catalog = options.serviceCatalog
+        if catalog == nil and features.serviceCatalog ~= false and NightShift.ServiceCatalog then
+            local created, err = NightShift.ServiceCatalog.new({ config = config.serviceCatalog })
+            if not created then return err end
+            catalog = created
+        end
+        local pricing = options.pricingService
+        if pricing == nil and features.pricing ~= false and NightShift.PricingService then
+            local created, err = NightShift.PricingService.new({ catalog = catalog, config = config.pricing, clock = options.clock })
+            if not created then return err end
+            pricing = created
+        end
+        local moneyAvailable = type(money) == 'table' and type(money.has) == 'function' and type(money.remove) == 'function' and type(money.add) == 'function'
+        if moneyAvailable and type(money.isAvailable) == 'function' then
+            local ok, available = pcall(money.isAvailable, money)
+            moneyAvailable = ok and available == true
+        end
+        local deposit = options.depositService
+        if deposit == nil and features.deposits == true and moneyAvailable and NightShift.DepositService and repositories.deposit then
+            local depositConfig = config.deposit or config.deposits or { enabled = true, percentage = 0, account = 'cash' }
+            local created, err = NightShift.DepositService.new({ repository = repositories.deposit, money = money, config = depositConfig, clock = options.clock })
+            if not created then return err end
+            deposit = created
+        end
+        local settlement = options.settlementService
+        local refund = options.refundService
         local identity = options.identityService
         if identity == nil and NightShift.IdentityService then
             local created, err = NightShift.IdentityService.new({ framework = framework })
@@ -303,12 +350,23 @@ local defaultStages = {
                 timelineService = bookingTimeline,
                 reservationService = reservationService,
                 permissionService = permissions,
-                catalogResolver = options.catalogResolver,
-                quoteResolver = options.quoteResolver,
+                catalogResolver = options.catalogResolver or catalog,
+                quoteResolver = options.quoteResolver or pricing,
                 clock = options.clock
             })
             if not created then return err end
             booking = created
+        end
+        if settlement == nil and features.payments == true and moneyAvailable and NightShift.SettlementService and repositories.payment then
+            local paymentConfig = config.payment or config.payments or { enabled = true, account = 'cash' }
+            local created, err = NightShift.SettlementService.new({ repository = repositories.payment, money = money, bookingService = booking, config = paymentConfig, clock = options.clock, depositService = deposit })
+            if not created then return err end
+            settlement = created
+        end
+        if refund == nil and features.refunds ~= false and moneyAvailable and NightShift.RefundService and repositories.payment then
+            local created, err = NightShift.RefundService.new({ repository = repositories.payment, money = money, bookingService = booking, config = config.cancellation, clock = options.clock, depositService = deposit })
+            if not created then return err end
+            refund = created
         end
         if not bookingTimeline or not reservationService or not booking then
             return { ok = true, deferred = true, reason = 'booking services unavailable' }
@@ -320,7 +378,12 @@ local defaultStages = {
             permissions = permissions,
             bookingTimeline = bookingTimeline,
             bookingReservation = reservationService,
-            booking = booking
+            booking = booking,
+            serviceCatalog = catalog,
+            pricing = pricing,
+            deposit = deposit,
+            settlement = settlement,
+            refund = refund
         } }
     end
 }

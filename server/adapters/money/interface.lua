@@ -51,6 +51,10 @@ local function text(value, max)
     return result:sub(1, max or 120)
 end
 
+local function idempotencyKey(value)
+    return type(value) == 'string' and value:match('^%S+$') ~= nil and #value <= 128 and value or nil
+end
+
 local function unwrap(value)
     if type(value) == 'table' and value.ok ~= nil then
         if value.ok == true then return true, value.value end
@@ -135,41 +139,42 @@ function Adapter:has(source, account, amount)
     return Result.ok(result)
 end
 
-function Adapter:remove(source, account, amount, reason)
+function Adapter:remove(source, account, amount, reason, key)
     local input, errorResult = self:_validate(source, account, amount)
     if not input then return errorResult end
     local available = self:has(input.source, input.account, input.amount)
     if not available.ok then return available end
     if available.value ~= true then return operationError(Codes.MONEY_INSUFFICIENT_FUNDS, 'insufficient funds', { source = input.source, account = input.account, amount = input.amount }) end
-    local ok, value = call(self._remove, input.source, input.account, input.amount, text(reason, 120))
+    local ok, value = call(self._remove, input.source, input.account, input.amount, text(reason, 120), idempotencyKey(key))
     if not succeeded(ok, value) then return operationError(Codes.MONEY_OPERATION_FAILED, 'money removal failed', { provider = self.name, account = input.account, amount = input.amount }) end
     return Result.ok({ source = input.source, account = input.account, amount = input.amount, reason = text(reason, 120) })
 end
 
-function Adapter:add(source, account, amount, reason)
+function Adapter:add(source, account, amount, reason, key)
     local input, errorResult = self:_validate(source, account, amount)
     if not input then return errorResult end
-    local ok, value = call(self._add, input.source, input.account, input.amount, text(reason, 120))
+    local ok, value = call(self._add, input.source, input.account, input.amount, text(reason, 120), idempotencyKey(key))
     if not succeeded(ok, value) then return operationError(Codes.MONEY_OPERATION_FAILED, 'money addition failed', { provider = self.name, account = input.account, amount = input.amount }) end
     return Result.ok({ source = input.source, account = input.account, amount = input.amount, reason = text(reason, 120) })
 end
 
-function Adapter:transfer(fromSource, toSource, account, amount, reason)
+function Adapter:transfer(fromSource, toSource, account, amount, reason, key)
     local from = sourceId(fromSource)
     local to = sourceId(toSource)
     if not from or not to or from == to then return operationError(Codes.MONEY_INVALID_ARGUMENT, 'transfer sources must be distinct positive integers') end
     local input, errorResult = self:_validate(from, account, amount)
     if not input then return errorResult end
+    local operationKey = idempotencyKey(key)
     if type(self._transfer) == 'function' and self._capabilities.atomicTransfer == true then
-        local ok, value = call(self._transfer, from, to, input.account, input.amount, text(reason, 120))
+        local ok, value = call(self._transfer, from, to, input.account, input.amount, text(reason, 120), operationKey)
         if not succeeded(ok, value) then return operationError(Codes.MONEY_OPERATION_FAILED, 'atomic money transfer failed', { provider = self.name }) end
         return Result.ok({ fromSource = from, toSource = to, account = input.account, amount = input.amount, atomic = true, reason = text(reason, 120) })
     end
-    local removed = self:remove(from, input.account, input.amount, reason)
+    local removed = self:remove(from, input.account, input.amount, reason, operationKey and operationKey .. ':debit' or nil)
     if not removed.ok then return removed end
-    local added = self:add(to, input.account, input.amount, reason)
+    local added = self:add(to, input.account, input.amount, reason, operationKey and operationKey .. ':credit' or nil)
     if added.ok then return Result.ok({ fromSource = from, toSource = to, account = input.account, amount = input.amount, atomic = false, reason = text(reason, 120) }) end
-    local compensated = self:add(from, input.account, input.amount, 'NightShift transfer compensation')
+    local compensated = self:add(from, input.account, input.amount, 'NightShift transfer compensation', operationKey and operationKey .. ':reverse' or nil)
     return operationError(Codes.MONEY_OPERATION_FAILED, 'money transfer failed', { provider = self.name, atomic = false, compensated = compensated.ok == true })
 end
 

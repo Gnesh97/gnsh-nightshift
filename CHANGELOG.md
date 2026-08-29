@@ -4,6 +4,18 @@ All notable changes to NightShift are documented here.
 
 ## [Unreleased]
 
+### S06 — Pricing, Settlement, Deposit & Refund
+
+- **NS-060:** Added a configurable server-owned service catalog for SHORT/STANDARD/PREMIUM/PRIVATE/VIP packages, base price/duration/reputation requirements, meeting/location compatibility, feature gating, and fail-closed BookingService package resolution.
+- **NS-061:** Added a deterministic server-authoritative pricing engine with package/NPC/district/time/demand/reputation modifiers, travel/location fees, safe min/max clamping, explainable line items, and expiring quote IDs; client-supplied totals are ignored.
+- **NS-062:** Added immutable price-quote binding/acceptance snapshots and BookingService integration; quote IDs, expiry, and agreed quote IDs persist through `sql/012_pricing_snapshots.sql`, so settlement uses the accepted price even when later demand inputs change.
+- **NS-063:** Added HELD deposit domain/repository/service lifecycle with server-derived amounts, stable idempotency keys, capability-gated money effects, release/refund/retain transitions, and compensation on persistence/race failures.
+- **NS-064:** Added payment intent repository and settlement service with durable `settlement:{booking_id}` keys, frozen-price fingerprint checks, capability-gated atomic transfer, optional commission hook, deposit finalization, and canonical COMPLETED → SETTLED transition only after a committed financial result.
+- **NS-065:** Added state-aware cancellation/refund policy (including scheduled/assigned/en-route aliases), server-clock calculation, deposit retention/refund integration, and idempotent server-computed refunds.
+- Extended the normalized money adapter boundary to forward stable operation keys to provider callbacks (including compensatable split-leg suffixes), while existing providers remain fail-closed until they advertise durable idempotency.
+- Added S06 contract coverage for catalog compatibility, deterministic/clamped quotes, quote immutability, persisted snapshots, deposit replay/compensation, settlement replay/failure markers, canonical transition requirements, commission hooks, and refund idempotency.
+- Local S06 exit-gate contracts, migration/schema contracts, full Lua parsing, and `git diff --check` pass. The persistence-enabled runtime must be restarted once to apply migration 012; live provider money tests remain intentionally deferred until adapters expose durable idempotency and atomic-transfer capabilities.
+
 ### S05 — Unified Booking Core
 
 - **NS-050:** Added one validated booking aggregate for player/NPC client and worker combinations, immutable service-package and quote/agreed-price snapshots, participant references, meeting/location data, lifecycle timestamps, idempotency, correlation, and external references.

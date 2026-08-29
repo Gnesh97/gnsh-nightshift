@@ -150,10 +150,10 @@ do
         local bootOk, bootResult = NightShift.Server.bootstrap({
             config = source,
             providerResolver = resolver,
-            migrationRunner = { run = function() return NightShift.Result.ok({ currentVersion = 11, applied = {} }) end }
+            migrationRunner = { run = function() return NightShift.Result.ok({ currentVersion = 12, applied = {} }) end }
         })
         check(bootOk and bootResult.config.config.features.persistence == true, 'runtime persistence convar must enable the default config stage')
-        check(bootResult.db.database and bootResult.db.migrations.value.currentVersion == 11, 'runtime persistence bootstrap must auto-wire oxmysql before migrations')
+        check(bootResult.db.database and bootResult.db.migrations.value.currentVersion == 12, 'runtime persistence bootstrap must auto-wire oxmysql before migrations')
     end)
     _G.GetConvar = previousGetConvar
     _G.MySQL = previousMySQL
@@ -178,5 +178,5 @@ do
         end
     })
     local result = runner:run()
-    check(result.ok and result.value.currentVersion == 11 and #result.value.applied == 11, 'registered SQL migrations must run from default definitions')
+    check(result.ok and result.value.currentVersion == 12 and #result.value.applied == 12, 'registered SQL migrations must run from default definitions')
 end

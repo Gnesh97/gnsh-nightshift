@@ -14,8 +14,9 @@ local columns = {
     'worker_type', 'worker_ref', 'client_profile_id', 'worker_profile_id',
     'npc_worker_id', 'service_package_id', 'mode', 'meeting_mode',
     'location_type', 'location_ref', 'location_id', 'quote_minor',
-    'quote_currency', 'quoted_at', 'agreed_price_minor', 'agreed_currency',
-    'agreed_at', 'price_minor', 'currency', 'status', 'correlation_id',
+    'quote_currency', 'quoted_at', 'quote_id', 'quote_expires_at',
+    'agreed_price_minor', 'agreed_currency', 'agreed_at', 'agreed_quote_id',
+    'price_minor', 'currency', 'status', 'correlation_id',
     'external_reference', 'scheduled_at', 'started_at', 'ended_at',
     'completed_at', 'version', 'created_at', 'updated_at'
 }
@@ -51,7 +52,11 @@ local function normalizeSnapshot(value, field)
     local amount = integer(value.amountMinor or value.amount, 0, 100000000000)
     local currency = type(value.currency) == 'string' and value.currency:upper() or nil
     if not amount or not currency or currency:match('^[A-Z][A-Z][A-Z]$') == nil then return nil, invalid(field .. ' snapshot is invalid') end
-    return { amountMinor = amount, currency = currency, quotedAt = value.quotedAt, agreedAt = value.agreedAt, expiresAt = value.expiresAt }
+    local quoteId = value.quoteId or value.quote_id
+    if quoteId ~= nil and not text(quoteId, 128) then return nil, invalid(field .. ' quote ID is invalid') end
+    local expiresAt = value.expiresAt or value.expires_at
+    if expiresAt ~= nil and not (type(expiresAt) == 'number' or text(expiresAt, 64)) then return nil, invalid(field .. ' expiry is invalid') end
+    return { amountMinor = amount, currency = currency, quotedAt = value.quotedAt, agreedAt = value.agreedAt, expiresAt = expiresAt, quoteId = quoteId }
 end
 
 local function safeTableName(value)
@@ -155,10 +160,13 @@ function Repository:updateExpectedVersion(id, expectedVersion, changes)
                 mapped.quote_minor = snapshot and snapshot.amountMinor or nil
                 mapped.quote_currency = snapshot and snapshot.currency or nil
                 mapped.quoted_at = snapshot and snapshot.quotedAt or nil
+                mapped.quote_id = snapshot and snapshot.quoteId or nil
+                mapped.quote_expires_at = snapshot and snapshot.expiresAt or nil
             else
                 mapped.agreed_price_minor = snapshot and snapshot.amountMinor or nil
                 mapped.agreed_currency = snapshot and snapshot.currency or nil
                 mapped.agreed_at = snapshot and snapshot.agreedAt or nil
+                mapped.agreed_quote_id = snapshot and snapshot.quoteId or nil
                 if snapshot then mapped.price_minor, mapped.currency = snapshot.amountMinor, snapshot.currency end
             end
         elseif field == 'meetingMode' then
