@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-29
 
-**Status:** PASS (local contracts, schema/migration wiring, and static verification; live provider-money smoke deferred)
+**Status:** PASS (local contracts, schema/migration wiring, static verification, and live persistence gate; live provider-money smoke deferred)
 
 **Scope:** NS-060, NS-061, NS-062, NS-063, NS-064, NS-065 only
 
@@ -60,7 +60,7 @@
 
 ## Live FiveM / provider-money smoke
 
-- The previously verified runtime persistence gate remains healthy at migration 11. S06 adds migration 12, so the running FXServer must be restarted with `nightshift_persistence=true` to apply it and should then report `migration=12`.
+- Live persistence gate passed: after a controlled restart with `nightshift_persistence=true`, FXServer reported `NightShift server ready (persistence=true database=true migration=12)`.
 - No live financial charge/refund was executed. The current framework money adapters do not advertise durable idempotency and atomic transfer capabilities; S06 services therefore fail closed for those operations until a provider-specific implementation supplies them. This is intentional and prevents unsafe duplicate or partial money effects.
 
 ## Security / recovery
@@ -74,7 +74,7 @@
 
 - Provider-specific idempotency/atomic-transfer implementations, public network handlers, client UI, and live player financial flows remain scheduled for later phases.
 - A financial commit followed by a booking/timeline persistence failure returns `paymentCommitted=true` for reconciliation; a future cross-table transaction/reconciliation worker can close that boundary.
-- Migration 012 has not yet been applied to the running user server in this turn; apply it through the normal controlled resource restart before exercising persistent quote snapshots.
+- Migration 012 is applied and the persistence-enabled runtime is ready. Persistent quote snapshots can be exercised after the provider-money capability gate is implemented.
 
 ## Exit Gate
 
@@ -85,6 +85,7 @@
 - [x] Settlement intent, frozen-price use, canonical transition, and failure markers.
 - [x] State-aware server-computed refund and idempotent replay.
 - [x] Local contracts, parser, schema/migration, and diff verification.
+- [x] Live persistence bootstrap with migration 012 (`persistence=true database=true migration=12`).
 - [ ] Live provider-money smoke (blocked intentionally by missing provider capability contract, not by a code/test failure).
 
 **S06 Exit Gate: PASS for local implementation and safety contracts. Live financial/provider smoke remains deferred until the adapters expose durable idempotency and atomic-transfer support; S07 remains pending.**

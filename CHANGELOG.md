@@ -16,7 +16,7 @@ All notable changes to NightShift are documented here.
 - Extended the normalized money adapter boundary to forward stable operation keys to provider callbacks (including compensatable split-leg suffixes), while existing providers remain fail-closed until they advertise durable idempotency.
 - Added S06 contract coverage for catalog compatibility, deterministic/clamped quotes, quote immutability, persisted snapshots, deposit replay/compensation, settlement replay/failure markers, canonical transition requirements, commission hooks, and refund idempotency.
 - Bootstrap startup failures now log bounded message/path/cause context, making `INVALID_CONFIG` diagnosis actionable without dumping the full error payload.
-- Local S06 exit-gate contracts, migration/schema contracts, full Lua parsing, and `git diff --check` pass. The persistence-enabled runtime must be restarted once to apply migration 012; live provider money tests remain intentionally deferred until adapters expose durable idempotency and atomic-transfer capabilities.
+- Local S06 exit-gate contracts, migration/schema contracts, full Lua parsing, and `git diff --check` pass. The live persistence gate also passed after a controlled restart (`persistence=true database=true migration=12`); live provider money tests remain intentionally deferred until adapters expose durable idempotency and atomic-transfer capabilities.
 
 ### S05 — Unified Booking Core
 
