@@ -151,12 +151,34 @@ function Service:_transfer(booking, actor, request, key, amount, currency)
     return nil, Result.err(Codes.SETTLEMENT_NOT_READY, 'split-leg settlement requires explicit durable leg support')
 end
 
+function Service:_finalizeDeposit(booking, actor)
+    if not self._deposit or type(self._deposit.retain) ~= 'function' then return true end
+    local finalized = self._deposit:retain(booking, actor)
+    if type(finalized) ~= 'table' then
+        return nil, Result.err(Codes.SETTLEMENT_OPERATION_FAILED, 'settlement deposit finalization returned an invalid result', { paymentCommitted = true })
+    end
+    if not finalized.ok and (not finalized.error or finalized.error.code ~= Codes.DEPOSIT_NOT_FOUND) then
+        return nil, Result.err(Codes.SETTLEMENT_OPERATION_FAILED, 'settlement payment committed but deposit finalization is pending', { paymentCommitted = true, cause = finalized.error and finalized.error.code })
+    end
+    return true
+end
+
+function Service:_runCommission(booking, payment, request, key)
+    if type(self._commissionHook) ~= 'function' then return true, nil end
+    local ok, value = pcall(self._commissionHook, copy(booking), copy(payment), copy(request or {}), key)
+    if not ok then
+        return nil, Result.err(Codes.SETTLEMENT_OPERATION_FAILED, 'settlement commission hook failed', { paymentCommitted = true })
+    end
+    if value == false or (type(value) == 'table' and value.ok == false) then
+        return nil, Result.err(Codes.SETTLEMENT_OPERATION_FAILED, 'settlement commission hook rejected the payment', { paymentCommitted = true })
+    end
+    if type(value) == 'table' and value.ok == true then return true, copy(value.value) end
+    return true, copy(value)
+end
+
 function Service:settle(first, second, request)
     local actor, bookingOrId = normalizeBookingActor(first, second)
     if not self:isEnabled() then return Result.err(Codes.SETTLEMENT_NOT_READY, 'settlement is disabled') end
-    if type(self._bookingService) ~= 'table' or type(self._bookingService.settle) ~= 'function' then
-        return Result.err(Codes.SETTLEMENT_NOT_READY, 'booking service is required for canonical settlement transition')
-    end
     local booking, bookingError = self:_loadBooking(bookingOrId)
     if not booking then return bookingError end
     if booking.status == 'SETTLED' then
@@ -164,6 +186,9 @@ function Service:settle(first, second, request)
         if existing then return Result.ok({ booking = booking, payment = existing, status = 'SETTLED' }, { idempotent = true }) end
         return Result.err(Codes.SETTLEMENT_ALREADY_PROCESSED, 'booking is already settled') end
     if booking.status ~= 'COMPLETED' then return Result.err(Codes.SETTLEMENT_NOT_READY, 'only completed bookings can be settled', { status = booking.status }) end
+    if type(self._bookingService) ~= 'table' or type(self._bookingService.settle) ~= 'function' then
+        return Result.err(Codes.SETTLEMENT_NOT_READY, 'booking service is required for canonical settlement transition')
+    end
     local price = booking.agreedPrice
     if type(price) ~= 'table' then return Result.err(Codes.SETTLEMENT_NOT_READY, 'booking has no frozen agreed price') end
     local amount = integer(price.amountMinor, 1, 100000000000)
@@ -177,10 +202,14 @@ function Service:settle(first, second, request)
         if self._settled[tostring(booking.id)] or booking.status == 'SETTLED' then
             return Result.ok({ booking = booking, payment = existing, status = 'SETTLED' }, { idempotent = true })
         end
-        local transitioned = self._bookingService and type(self._bookingService.settle) == 'function' and self._bookingService:settle(actor, booking.id, booking.version) or Result.ok(booking)
+        local finalized, finalizeError = self:_finalizeDeposit(booking, actor)
+        if not finalized then return finalizeError end
+        local commissionOk, commission = self:_runCommission(booking, existing, request, key)
+        if not commissionOk then return commission end
+        local transitioned = self._bookingService:settle(actor, booking.id, booking.version)
         if type(transitioned) ~= 'table' or not transitioned.ok then return Result.err(Codes.SETTLEMENT_OPERATION_FAILED, 'payment succeeded but booking transition is pending', { paymentCommitted = true, cause = transitioned and transitioned.error and transitioned.error.code }) end
         self._settled[tostring(booking.id)] = true
-        return Result.ok({ booking = transitioned.value or transitioned, payment = existing, status = 'SETTLED' }, { idempotent = true }) end
+        return Result.ok({ booking = transitioned.value or transitioned, payment = existing, commission = commission, status = 'SETTLED' }, { idempotent = true }) end
     local payment = existing
     if not payment then
         local created = self._repository:create({ bookingId = booking.id, idempotencyKey = key, paymentType = 'SETTLEMENT', amountMinor = amount, currency = currency, status = 'PENDING' })
@@ -203,23 +232,11 @@ function Service:settle(first, second, request)
     local committed = copy(payment)
     committed.status, committed.mode = 'SUCCEEDED', transfer.mode
     committed.version = updated.value and updated.value.version or (payment.version or 1) + 1
-    if self._deposit and type(self._deposit.retain) == 'function' then
-        local finalized = self._deposit:retain(booking, actor)
-        if type(finalized) ~= 'table' or not finalized.ok and finalized.error and finalized.error.code ~= Codes.DEPOSIT_NOT_FOUND then
-            return Result.err(Codes.SETTLEMENT_OPERATION_FAILED, 'settlement payment committed but deposit finalization is pending', { paymentCommitted = true, cause = finalized and finalized.error and finalized.error.code }) end
-    end
-    local commission
-    if type(self._commissionHook) == 'function' then
-        local ok, value = pcall(self._commissionHook, copy(booking), copy(committed), copy(request or {}))
-        if not ok then
-            return Result.err(Codes.SETTLEMENT_OPERATION_FAILED, 'settlement commission hook failed', { paymentCommitted = true })
-        end
-        if value == false or (type(value) == 'table' and value.ok == false) then
-            return Result.err(Codes.SETTLEMENT_OPERATION_FAILED, 'settlement commission hook rejected the payment', { paymentCommitted = true })
-        end
-        commission = type(value) == 'table' and value.value or value
-    end
-    local transitioned = self._bookingService and type(self._bookingService.settle) == 'function' and self._bookingService:settle(actor, booking.id, booking.version) or Result.ok(copy(booking))
+    local finalized, finalizeError = self:_finalizeDeposit(booking, actor)
+    if not finalized then return finalizeError end
+    local commissionOk, commission = self:_runCommission(booking, committed, request, key)
+    if not commissionOk then return commission end
+    local transitioned = self._bookingService:settle(actor, booking.id, booking.version)
     if type(transitioned) ~= 'table' or not transitioned.ok then return Result.err(Codes.SETTLEMENT_OPERATION_FAILED, 'settlement payment committed but booking transition is pending', { paymentCommitted = true, cause = transitioned and transitioned.error and transitioned.error.code }) end
     self._settled[tostring(booking.id)] = true
     return Result.ok({ booking = transitioned.value or transitioned, payment = committed, commission = commission, status = 'SETTLED' })

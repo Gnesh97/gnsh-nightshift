@@ -13,6 +13,7 @@
 - **NS-062 — Price Freeze:** added the immutable PriceQuote domain with booking binding, expiry, accepted snapshots, and no post-acceptance recalculation. BookingService accepts package IDs, applies server quotes, rejects expired quotes, and persists quote ID/expiry/agreed quote ID through migration `012_pricing_snapshots.sql`.
 - **NS-063 — Deposit Service:** added validated HELD/PENDING/UNKNOWN/REFUNDED/PARTIALLY_REFUNDED/RETAINED states, repository persistence, server-derived hold amounts, stable `deposit:{booking_id}` intent keys, idempotent replay, insufficient-funds checks, and debit compensation when validation or persistence fails.
 - **NS-064 — Settlement Service:** added payment intent persistence and frozen-price fingerprint validation. Settlement requires COMPLETED, persists the unique intent before the provider call, requires explicit atomic-transfer plus durable idempotency capability, supports an optional commission hook, finalizes deposits, and calls the canonical BookingService transition only after financial success. Failed/unknown outcomes never mark a booking SETTLED.
+- **Post-commit recovery:** retries of a SUCCEEDED payment intent resume deposit/commission finalization before transitioning the booking, so a post-provider failure does not issue a second transfer or skip required finalization.
 - **NS-065 — Cancellation & Refund Policy:** added configurable state-aware percentages for pre-assignment, scheduled, assigned, en-route, travelling, arrived, active, completed, and settled states. Refunds use the server clock and frozen booking price, ignore client amount/account fields, persist idempotent refund intents, and retain deposits when no automatic refund is due.
 - **Money boundary hardening:** extended the normalized money adapter methods to forward stable idempotency keys (and debit/credit/reverse suffixes for any future compensatable split-leg implementation) without exposing provider-native objects to the services.
 
@@ -52,7 +53,7 @@
 ## Tests and verification
 
 - `C:\Users\Gnesh\AppData\Local\Programs\Lua\5.5.1\lua.exe tests/run.lua` passes NS-010/011, NS-020/023, NS-030..037, NS-040..043, NS-050..054, and NS-060..065 contracts.
-- S06 coverage includes package compatibility/requirements, deterministic pricing, client-total rejection, modifier clamping, quote expiry/immutability, booking snapshot round-trip, double deposit capture, insufficient funds, compensation paths, settlement replay/failure/canonical-transition checks, commission hook behavior, and server-computed double refunds.
+- S06 coverage includes package compatibility/requirements, deterministic pricing, client-total rejection, modifier clamping, quote expiry/immutability, booking snapshot round-trip, double deposit capture, insufficient funds, compensation paths, settlement replay/failure/canonical-transition/post-commit recovery checks, commission hook behavior, and server-computed double refunds.
 - All 80 Lua files parse with `luac -p`; `git diff --check` passes.
 - Migration/schema contracts verify that `012_pricing_snapshots.sql` is registered as migration 12 and preserves existing migration checksums.
 

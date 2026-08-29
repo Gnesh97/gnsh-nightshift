@@ -298,6 +298,25 @@ do
 end
 
 do
+    local repository = financialRepository()
+    local commissionCalls, bookingTransitions = 0, 0
+    local settlement = assert(SettlementService.new({
+        bookingService = { settle = function() bookingTransitions = bookingTransitions + 1; return result({ status = 'SETTLED' }) end },
+        repository = repository,
+        money = money,
+        commissionHook = function()
+            commissionCalls = commissionCalls + 1
+            if commissionCalls == 1 then return false end
+            return { feeMinor = 60 }
+        end,
+        config = { enabled = true, account = 'cash' }
+    }))
+    local first = settlement:settle({ source = 1 }, booking, { payerSource = 1, payeeSource = 2 })
+    local retry = settlement:settle({ source = 1 }, booking, { payerSource = 1, payeeSource = 2 })
+    check(not first.ok and first.error.details.paymentCommitted and retry.ok and bookingTransitions == 1 and commissionCalls == 2, 'post-commit settlement failures must resume from the durable payment intent without charging twice')
+end
+
+do
     local settlement = assert(SettlementService.new({
         repository = financialRepository(), money = money,
         config = { enabled = true, account = 'cash' }
