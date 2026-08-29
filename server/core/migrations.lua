@@ -216,7 +216,8 @@ Migrations.DefinitionFiles = Migrations.DefinitionFiles or {
     '006_locations.sql',
     '007_payments.sql',
     '008_relationships.sql',
-    '009_indexes.sql'
+    '009_indexes.sql',
+    '010_identity_profiles.sql'
 }
 Migrations.checksum = checksum
 Migrations.Runner = Runner

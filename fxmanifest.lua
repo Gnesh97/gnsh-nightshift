@@ -41,6 +41,15 @@ server_scripts {
     'server/adapters/database/oxmysql.lua',
     'server/core/migrations.lua',
     'server/repositories/base_repository.lua',
+    'server/services/identity_service.lua',
+    'server/domain/worker_profile.lua',
+    'server/repositories/worker_profile_repository.lua',
+    'server/services/worker_profile_service.lua',
+    'server/domain/client_profile.lua',
+    'server/repositories/client_profile_repository.lua',
+    'server/services/client_profile_service.lua',
+    'config/permissions.lua',
+    'server/services/permission_service.lua',
     'server/bootstrap.lua'
 }
 client_scripts {

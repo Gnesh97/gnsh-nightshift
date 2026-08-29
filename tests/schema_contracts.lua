@@ -8,7 +8,8 @@ local files = {
     '006_locations.sql',
     '007_payments.sql',
     '008_relationships.sql',
-    '009_indexes.sql'
+    '009_indexes.sql',
+    '010_identity_profiles.sql'
 }
 
 local contents, allParts = {}, {}
@@ -35,4 +36,6 @@ check(all:find('idempotency_key', 1, true) ~= nil, 'idempotency key column missi
 check(all:find('UNIQUE KEY', 1, true) ~= nil, 'unique idempotency/index constraint missing')
 check(all:find('version INT UNSIGNED NOT NULL', 1, true) ~= nil, 'mutable aggregate version column missing')
 check(contents['009_indexes.sql']:find('CREATE INDEX', 1, true) ~= nil, 'initial lookup indexes missing')
-check(#NightShift.Migrations.DefinitionFiles == 9, 'all S02 migrations must be registered')
+check(contents['010_identity_profiles.sql']:find('professionalism', 1, true) ~= nil, 'identity profile fields missing')
+check(contents['010_identity_profiles.sql']:find('deposit_risk_score', 1, true) ~= nil, 'client deposit risk fields missing')
+check(#NightShift.Migrations.DefinitionFiles == 10, 'S04 identity profile migration must be registered')

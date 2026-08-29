@@ -4,6 +4,14 @@ All notable changes to NightShift are documented here.
 
 ## [Unreleased]
 
+### S04 — Identity & Profiles
+
+- **NS-040:** Added server-side stable identity mapping from persistent player identifier plus character ID; reconnects refresh only ephemeral source mappings, while character switches/source reuse produce distinct keys and safe display aliases.
+- **NS-041/042:** Added immutable worker/client profile domain models, identity-scoped repositories, versioned create/read/update services, and character-isolated persistence fields.
+- **NS-043:** Added allowlisted centralized permissions with framework job/grade mappings, ACE/custom trusted hooks, lifecycle cache invalidation, and fail-closed unknown/malformed decisions.
+- Added `sql/010_identity_profiles.sql` to extend the existing profile tables without changing applied S02 migration checksums, and wired profile/permission services into the bootstrap stage.
+- Added S04 identity/profile/permission contract coverage; live FiveM/character and production MySQL smoke remain deferred to the final runtime gate.
+
 ### S01 — Resource Foundation
 
 - Added the Lua 5.4 FiveM resource manifest and deterministic server/client bootstrap lifecycle.
