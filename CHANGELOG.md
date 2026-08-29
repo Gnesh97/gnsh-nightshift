@@ -4,6 +4,16 @@ All notable changes to NightShift are documented here.
 
 ## [Unreleased]
 
+### S09 — NPC Travel, Streaming & Entity Control
+
+- **NS-090:** Added immutable, server-owned logical travel plans with typed endpoints, deterministic ETA, monotonic progress, spawn thresholds, explicit recovery states, arrival, and return transitions; travel does not require a physical ped.
+- **NS-091:** Added server/client entity registries with generation-bound profile mappings, network/entity handles, ownership migration tolerance, deleted-ped detection, and replacement generations; client mappings contain no booking business state.
+- **NS-092:** Added controlled NPC spawn authorization with server-resolved safe candidates, model allowlists, minimal replicated metadata, generation tokens, and optional server-created entities; client model/coordinate injection is rejected.
+- **NS-093:** Added near-player navigation stuck/player-away/timeout/deletion recovery and radius-gated arrival callbacks, plus server-side travel/entity/owner/plausibility validation before the canonical booking arrival transition.
+- **NS-094:** Added safe fade/delete despawn cleanup and an optional generation-bound worker return hook so physical entities cannot leak while logical state remains authoritative.
+- Added streaming policy configuration, shared S09 enums/error codes/schemas, manifest/bootstrap wiring, replacement and spoof regression coverage, and \`docs/sprints/S09-SPRINT-REPORT.md\`.
+- Local full Lua contracts, parser checks, and \`git diff --check\` pass. Live model/candidate integration and player navigation/entity smoke remain the next FiveM runtime gate.
+
 ### S08 — NPC Profile & Marketplace Core
 
 - **NS-080:** Added logical CUSTOMER/WORKER NPC profiles with persistent/semi-persistent lifetimes, sanitized aliases, appearance references, budget/price classes, bounded traits, district/travel availability, immutable copies, and versioned repository persistence.

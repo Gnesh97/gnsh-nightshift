@@ -58,6 +58,35 @@ NightShift.Enums.NpcTravelModes = NightShift.Enums.NpcTravelModes or {
     UNKNOWN = true
 }
 
+NightShift.Enums.NpcTravelStates = NightShift.Enums.NpcTravelStates or {
+    PLANNED = true,
+    TRAVELLING = true,
+    ARRIVAL_PENDING = true,
+    ARRIVED = true,
+    STUCK = true,
+    RECOVERING = true,
+    RETURNING = true,
+    COMPLETED = true,
+    CANCELLED = true,
+    EXPIRED = true
+}
+
+NightShift.Enums.NpcTravelRecoveryStates = NightShift.Enums.NpcTravelRecoveryStates or {
+    NONE = true,
+    STUCK = true,
+    PLAYER_AWAY = true,
+    ENTITY_DELETED = true,
+    TIMEOUT = true,
+    RETURNING = true
+}
+
+NightShift.Enums.NpcEntityStates = NightShift.Enums.NpcEntityStates or {
+    AUTHORIZED = true,
+    BOUND = true,
+    DELETED = true,
+    DESPAWNED = true
+}
+
 NightShift.Enums.NpcPriceClasses = NightShift.Enums.NpcPriceClasses or {
     [1] = true,
     [2] = true,

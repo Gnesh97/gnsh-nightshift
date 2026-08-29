@@ -384,10 +384,59 @@ local defaultStages = {
             if not created then return err end
             marketplace = created
         end
+        local streamingConfig = config.npcStreaming or NightShift.NpcStreamingConfig or {}
+        local npcTravel = options.npcTravelService or options.npcTravel
+        if npcTravel == nil and NightShift.NpcTravelService then
+            local created, err = NightShift.NpcTravelService.new({
+                locationService = locationService,
+                clock = options.clock,
+                config = streamingConfig,
+                etaEstimator = options.npcTravelEtaEstimator
+            })
+            if not created then return err end
+            npcTravel = created
+        end
+        local npcEntityRegistry = options.npcEntityRegistry or options.npcEntityService
+        if npcEntityRegistry == nil and NightShift.NpcEntityRegistry then
+            local created, err = NightShift.NpcEntityRegistry.new({ clock = options.clock })
+            if not created then return err end
+            npcEntityRegistry = created
+        end
+        local npcSpawn = options.npcSpawnService or options.npcSpawn
+        if npcSpawn == nil and NightShift.NpcSpawnService and npcTravel and npcEntityRegistry then
+            local created, err = NightShift.NpcSpawnService.new({
+                travelService = npcTravel,
+                entityRegistry = npcEntityRegistry,
+                locationService = locationService,
+                clock = options.clock,
+                config = streamingConfig,
+                modelAllowlist = options.npcModelAllowlist or streamingConfig.modelAllowlist,
+                modelResolver = options.npcModelResolver,
+                safeSpawnResolver = options.npcSafeSpawnResolver,
+                appearanceResolver = options.npcAppearanceResolver,
+                createServerEntity = options.createNpcServerEntity
+            })
+            if not created then return err end
+            npcSpawn = created
+        end
+        local npcArrival = options.npcArrivalService or options.npcArrival
+        if npcArrival == nil and NightShift.NpcArrivalService and npcTravel and npcEntityRegistry then
+            local created, err = NightShift.NpcArrivalService.new({
+                travelService = npcTravel,
+                entityRegistry = npcEntityRegistry,
+                bookingService = options.bookingService,
+                clock = options.clock,
+                distanceCheck = options.npcArrivalDistanceCheck,
+                maxDistance = options.npcMaxPlausibleArrivalDistance or streamingConfig.maxPlausibleArrivalDistance
+            })
+            if not created then return err end
+            npcArrival = created
+        end
         if framework == nil or databaseDeferred then
             return { ok = true, deferred = true, reason = framework == nil and 'framework adapter not configured' or 'profile repositories deferred', services = {
                 location = locationService, locationReservation = locationReservation, vehicleLocation = vehicleLocation,
-                npcProfileGenerator = npcProfileGenerator, npcWorker = npcWorker, marketplace = marketplace
+                npcProfileGenerator = npcProfileGenerator, npcWorker = npcWorker, marketplace = marketplace,
+                npcTravel = npcTravel, npcEntityRegistry = npcEntityRegistry, npcSpawn = npcSpawn, npcArrival = npcArrival
             } }
         end
         local catalog = options.serviceCatalog
@@ -449,7 +498,8 @@ local defaultStages = {
         if not identity or not worker or not client or not permissions then
             return { ok = true, deferred = true, reason = 'identity/profile services unavailable', services = {
                 location = locationService, locationReservation = locationReservation, vehicleLocation = vehicleLocation,
-                npcProfileGenerator = npcProfileGenerator, npcWorker = npcWorker, marketplace = marketplace
+                npcProfileGenerator = npcProfileGenerator, npcWorker = npcWorker, marketplace = marketplace,
+                npcTravel = npcTravel, npcEntityRegistry = npcEntityRegistry, npcSpawn = npcSpawn, npcArrival = npcArrival
             } }
         end
         local bookingTimeline = options.bookingTimelineService
@@ -495,9 +545,11 @@ local defaultStages = {
         if not bookingTimeline or not reservationService or not booking then
             return { ok = true, deferred = true, reason = 'booking services unavailable', services = {
                 location = locationService, locationReservation = locationReservation, vehicleLocation = vehicleLocation,
-                npcProfileGenerator = npcProfileGenerator, npcWorker = npcWorker, marketplace = marketplace
+                npcProfileGenerator = npcProfileGenerator, npcWorker = npcWorker, marketplace = marketplace,
+                npcTravel = npcTravel, npcEntityRegistry = npcEntityRegistry, npcSpawn = npcSpawn, npcArrival = npcArrival
             } }
         end
+        if npcArrival and npcArrival._booking == nil then npcArrival._booking = booking end
         return { ok = true, services = {
             identity = identity,
             workerProfile = worker,
@@ -516,7 +568,11 @@ local defaultStages = {
             vehicleLocation = vehicleLocation,
             npcProfileGenerator = npcProfileGenerator,
             npcWorker = npcWorker,
-            marketplace = marketplace
+            marketplace = marketplace,
+            npcTravel = npcTravel,
+            npcEntityRegistry = npcEntityRegistry,
+            npcSpawn = npcSpawn,
+            npcArrival = npcArrival
         } }
     end
 }

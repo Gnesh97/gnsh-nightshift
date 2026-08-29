@@ -14,6 +14,7 @@ shared_scripts {
     'config/services.lua',
     'config/locations.lua',
     'config/npc_profiles.lua',
+    'config/npc_streaming.lua',
     'config/pricing.lua',
     'config/cancellation.lua',
     'config/config.lua'
@@ -63,6 +64,7 @@ server_scripts {
     'server/repositories/location_reservation_repository.lua',
     'server/domain/npc_profile.lua',
     'server/repositories/npc_profile_repository.lua',
+    'server/domain/travel_plan.lua',
     'server/state/booking_state_machine.lua',
     'server/repositories/booking_event_repository.lua',
     'server/core/reservations.lua',
@@ -73,6 +75,10 @@ server_scripts {
     'server/services/vehicle_location_service.lua',
     'server/services/npc_profile_generator.lua',
     'server/services/npc_worker_service.lua',
+    'server/services/npc_travel_service.lua',
+    'server/services/npc_entity_registry.lua',
+    'server/services/npc_spawn_service.lua',
+    'server/services/npc_arrival_service.lua',
     'server/services/marketplace_query_service.lua',
     'server/domain/price_quote.lua',
     'server/services/service_catalog.lua',
@@ -89,5 +95,10 @@ server_scripts {
 client_scripts {
     'client/bootstrap.lua',
     'client/adapters/target/interface.lua',
-    'client/adapters/notify/interface.lua'
+    'client/adapters/notify/interface.lua',
+    'client/core/result.lua',
+    'client/npc/entity_registry.lua',
+    'client/npc/spawn.lua',
+    'client/npc/navigation.lua',
+    'client/npc/despawn.lua'
 }

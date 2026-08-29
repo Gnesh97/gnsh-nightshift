@@ -22,6 +22,21 @@ NightShift.Schemas = {
         completedBookings = 'bounded_integer', cancelledBookings = 'bounded_integer',
         noShowBookings = 'bounded_integer', version = 'positive_integer'
     },
+    travelPlan = {
+        travelKey = 'string', bookingId = 'string', workerKey = 'string',
+        profileKey = 'string', origin = 'travel_endpoint',
+        destination = 'travel_endpoint', mode = 'enum',
+        etaSeconds = 'positive_number', startedAt = 'number',
+        expectedArrivalAt = 'number', progress = 'bounded_number',
+        spawnThreshold = 'bounded_number', state = 'enum',
+        recoveryState = 'enum', generation = 'positive_integer'
+    },
+    npcEntity = {
+        profileKey = 'string', travelKey = 'string', bookingId = 'string',
+        generation = 'positive_integer', generationToken = 'string',
+        entity = 'entity_handle', networkId = 'entity_handle',
+        owner = 'player_source', state = 'enum'
+    },
     demand = { min = 'bounded_number', max = 'bounded_number', window = 'positive_number' },
     heat = { min = 'bounded_number', max = 'bounded_number', decay = 'bounded_number' }
 }
