@@ -16,6 +16,7 @@
 - **Post-commit recovery:** retries of a SUCCEEDED payment intent resume deposit/commission finalization before transitioning the booking, so a post-provider failure does not issue a second transfer or skip required finalization.
 - **NS-065 — Cancellation & Refund Policy:** added configurable state-aware percentages for pre-assignment, scheduled, assigned, en-route, travelling, arrived, active, completed, and settled states. Refunds use the server clock and frozen booking price, ignore client amount/account fields, persist idempotent refund intents, and retain deposits when no automatic refund is due.
 - **Money boundary hardening:** extended the normalized money adapter methods to forward stable idempotency keys (and debit/credit/reverse suffixes for any future compensatable split-leg implementation) without exposing provider-native objects to the services.
+- **Bootstrap diagnostics:** startup failures now include bounded message, path, and cause context in the resource log, allowing configuration failures to be diagnosed without printing the complete error payload.
 
 ## Changed files
 

@@ -533,10 +533,22 @@ local function logRuntimeBootstrap(ok, result)
     local code = resultValue.code or errorValue.code or 'BOOTSTRAP_FAILED'
     local details = type(errorValue.details) == 'table' and errorValue.details or {}
     local stage = resultValue.stage or errorValue.stage or details.stage or 'unknown'
-    pcall(logger.error, logger, 'bootstrap', ('NightShift server startup failed (code=%s stage=%s)'):format(tostring(code), tostring(stage)), {
+    local function boundedString(value, fallback)
+        if type(value) ~= 'string' then return fallback end
+        local normalized = value:gsub('[%c]+', ' ')
+        if #normalized > 160 then normalized = normalized:sub(1, 160) end
+        return normalized
+    end
+    local message = boundedString(errorValue.message, 'unknown startup error')
+    local path = boundedString(details.path, nil) or boundedString(details.field, nil)
+    local cause = boundedString(details.cause, nil)
+    local suffix = (' message=%s%s%s'):format(message, path and (' path=' .. path) or '', cause and (' cause=' .. cause) or '')
+    pcall(logger.error, logger, 'bootstrap', ('NightShift server startup failed (code=%s stage=%s)%s'):format(tostring(code), tostring(stage), suffix), {
         code = code,
-        stage = errorValue.stage,
-        message = errorValue.message
+        stage = stage,
+        message = message,
+        path = path,
+        cause = cause
     })
 end
 
