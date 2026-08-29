@@ -38,8 +38,8 @@ local function invalid(message, details)
 end
 
 local function defaultLoadFile(path)
-    local loadResourceFile = rawget(_G, 'LoadResourceFile')
-    local getResourceName = rawget(_G, 'GetCurrentResourceName')
+    local loadResourceFile = type(LoadResourceFile) == 'function' and LoadResourceFile or nil
+    local getResourceName = type(GetCurrentResourceName) == 'function' and GetCurrentResourceName or nil
     if type(loadResourceFile) ~= 'function' or type(getResourceName) ~= 'function' then return nil end
     local nameOk, resourceName = pcall(getResourceName)
     if not nameOk or not text(resourceName) then return nil end

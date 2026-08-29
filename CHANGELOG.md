@@ -19,6 +19,7 @@ All notable changes to NightShift are documented here.
 - Added secret-free FiveM bootstrap diagnostics so resource logs identify `ready` versus typed startup failure, persistence status, database presence, and migration version.
 - Bootstrap diagnostics now include persistence/database/migration status directly in the console message, including an explicit `deferred` marker when the development DB gate is intentionally skipped.
 - Fixed FiveM runtime native lookup to call `GetConvar` and resolve `MySQL`/`exports` directly; replicated convars are now visible inside the resource sandbox instead of being mistaken for the development default.
+- Fixed the migration runner to resolve `LoadResourceFile`/`GetCurrentResourceName` through direct FiveM native lookup; SQL assets can now be loaded during the persistence bootstrap.
 
 ### S04 — Identity & Profiles
 

@@ -17,6 +17,7 @@
 - **Runtime persistence gate:** added the `nightshift_persistence` FiveM convar opt-in. When enabled, bootstrap clones the config immutably and wraps oxmysql only when the FiveM runtime exposes a usable driver; development defaults remain deferred and missing wiring fails closed.
 - **Runtime observability:** added secret-free `ready`/typed-failure bootstrap log entries with persistence, database, and migration-version context so a console restart is an auditable gate.
 - **Runtime lookup fix:** direct FiveM native/global resolution is used for `GetConvar`, `MySQL`, and `exports`; replicated convars are no longer hidden by `_G` raw-table lookup behavior.
+- **Migration loader fix:** `LoadResourceFile` and `GetCurrentResourceName` now use direct FiveM native lookup, allowing the registered SQL assets to reach the runner in the live resource sandbox.
 - **Direct review hardening:** fixed numeric booking-ID release normalization, prevented one booking from scanning/releasing another booking’s locks, preserved all resources across incremental reservation calls, persisted quote/agreed timestamps, required a server catalog resolver, closed stale quote/accept races with expected versions, and rejected explicit trusted-verifier denials.
 
 ## Changed files

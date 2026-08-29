@@ -84,6 +84,27 @@ do
 end
 
 do
+    local previousGetResourceName = rawget(_G, 'GetCurrentResourceName')
+    local previousLoadResourceFile = rawget(_G, 'LoadResourceFile')
+    local ok, errorMessage = pcall(function()
+        _G.GetCurrentResourceName = function() return 'gnsh-nightshift' end
+        _G.LoadResourceFile = function(resourceName, path)
+            check(resourceName == 'gnsh-nightshift' and path == 'sql/001_schema_version.sql', 'default migration loader must target the current resource')
+            return 'CREATE TABLE nightshift_schema_migrations (version INT)'
+        end
+        local runner = NightShift.Migrations.Runner.new({
+            db = newDatabase({}, true),
+            migrations = { { version = 1, name = '001_schema_version.sql', file = 'sql/001_schema_version.sql' } }
+        })
+        local result = runner:run()
+        check(result.ok and result.value.currentVersion == 1 and #result.value.applied == 1, 'default migration loader must read SQL through FiveM natives')
+    end)
+    _G.GetCurrentResourceName = previousGetResourceName
+    _G.LoadResourceFile = previousLoadResourceFile
+    check(ok, errorMessage)
+end
+
+do
     local previousGetConvar = rawget(_G, 'GetConvar')
     local previousMySQL = rawget(_G, 'MySQL')
     local previousExports = rawget(_G, 'exports')
