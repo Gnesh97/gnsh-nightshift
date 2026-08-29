@@ -84,6 +84,46 @@ do
 end
 
 do
+    local previousGetConvar = rawget(_G, 'GetConvar')
+    local previousMySQL = rawget(_G, 'MySQL')
+    local previousExports = rawget(_G, 'exports')
+    local ok, errorMessage = pcall(function()
+        _G.GetConvar = function(name, fallback)
+            return name == 'nightshift_persistence' and 'true' or fallback
+        end
+        local source = NightShift.Validators.copy(NightShift.DefaultConfig)
+        local enabled = NightShift.ServerBootstrap.applyRuntimeConfig(source)
+        check(enabled ~= source and enabled.features.persistence == true, 'runtime persistence convar must return a config copy with persistence enabled')
+        check(source.features.persistence == false, 'runtime persistence convar must not mutate the default config')
+
+        _G.GetConvar = function(_, fallback) return fallback end
+        local disabled = NightShift.ServerBootstrap.applyRuntimeConfig(source)
+        check(disabled == source and disabled.features.persistence == false, 'disabled runtime persistence must preserve the source config')
+
+        _G.GetConvar = function() return 'true' end
+        _G.MySQL = { scalar = { await = function() return 1 end } }
+        local adapter = NightShift.ServerBootstrap.createRuntimeDatabaseAdapter()
+        check(adapter and adapter:healthCheck().ok, 'runtime oxmysql adapter must expose a healthy normalized database contract')
+
+        local resolver = NightShift.ProviderResolver.new({
+            frameworkAdapters = { standalone = NightShift.FrameworkAdapters.standalone.new({ available = true }) },
+            moneyAdapters = { standalone = NightShift.MoneyAdapters.standalone.new({ enabled = false }) }
+        })
+        local bootOk, bootResult = NightShift.Server.bootstrap({
+            config = source,
+            providerResolver = resolver,
+            migrationRunner = { run = function() return NightShift.Result.ok({ currentVersion = 11, applied = {} }) end }
+        })
+        check(bootOk and bootResult.config.config.features.persistence == true, 'runtime persistence convar must enable the default config stage')
+        check(bootResult.db.database and bootResult.db.migrations.value.currentVersion == 11, 'runtime persistence bootstrap must auto-wire oxmysql before migrations')
+    end)
+    _G.GetConvar = previousGetConvar
+    _G.MySQL = previousMySQL
+    _G.exports = previousExports
+    check(ok, errorMessage)
+end
+
+do
     check(NightShift.Migrations.checksum('abc') == NightShift.Migrations.checksum('abc'), 'migration checksum must be deterministic')
     check(NightShift.Migrations.checksum('abc') ~= NightShift.Migrations.checksum('abd'), 'migration checksum must detect content changes')
 end

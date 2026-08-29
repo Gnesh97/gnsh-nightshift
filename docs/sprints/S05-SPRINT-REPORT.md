@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-29
 
-**Status:** PASS (local contract gate and live resource reload); DB-backed runtime gate deferred by development configuration
+**Status:** PASS (local contract gate, live resource reload, and runtime persistence wiring); DB-backed runtime gate pending controlled convar restart
 
 **Scope:** NS-050, NS-051, NS-052, NS-053, NS-054 only
 
@@ -14,6 +14,7 @@
 - **NS-053 — BookingService:** added server-side draft, quote, offer, accept/decline, reservation, travel, trusted arrival/active/complete, settlement, cancellation, expiration, and interruption operations with ownership checks, expected-version concurrency, timeline recording, and fail-closed catalog/quote authority.
 - **NS-054 — Coordinated Reservations:** added ordered NPC/worker → location/room/vehicle → deposit locks, TTL expiry, atomic rollback, provider compensation, retry idempotence, and booking-scoped release.
 - **Schema/bootstrap integration:** registered migration `011_booking_core.sql`, extended booking/event repositories, and wired timeline, reservation, and booking services into the server bootstrap.
+- **Runtime persistence gate:** added the `nightshift_persistence` FiveM convar opt-in. When enabled, bootstrap clones the config immutably and wraps oxmysql only when the FiveM runtime exposes a usable driver; development defaults remain deferred and missing wiring fails closed.
 - **Direct review hardening:** fixed numeric booking-ID release normalization, prevented one booking from scanning/releasing another booking’s locks, preserved all resources across incremental reservation calls, persisted quote/agreed timestamps, required a server catalog resolver, closed stale quote/accept races with expected versions, and rejected explicit trusted-verifier denials.
 
 ## Changed files
@@ -32,6 +33,7 @@
 - `shared/errors.lua`
 - `fxmanifest.lua`
 - `tests/s05_booking_contracts.lua`
+- `tests/migrations_contracts.lua`
 - `tests/s04_profiles_contracts.lua`
 - `tests/migrations_contracts.lua`
 - `tests/schema_contracts.lua`
@@ -41,6 +43,7 @@
 ## Tests and verification
 
 - `C:\Users\Gnesh\AppData\Local\Programs\Lua\5.5.1\lua.exe tests/run.lua` passed NS-010/011, NS-020/023, NS-030..037, NS-040..043, and NS-050..054 contracts.
+- Runtime convar, oxmysql adapter normalization, and default bootstrap-to-migration wiring contracts pass with isolated FiveM/oxmysql doubles.
 - Lua parse check passed for all 67 Lua files.
 - FiveM manifest S05 load-order assertions passed.
 - `git diff --check` passed.
@@ -53,6 +56,7 @@
 - `players.json` reports the connected local player `Gnesh`; endpoint reachability remains healthy.
 - The controlled console command `restart gnsh-nightshift` completed successfully (`Stopping resource` → `Creating script environments` → `Started resource`). The connected FiveM client log records the same reload and currently reports no gnsh-nightshift-specific script errors; `players.json` reports the connected local player.
 - The default development configuration has `features.persistence=false`, and bootstrap therefore defers the database/repository/service stages without an injected adapter. The restart proves resource reload health, but it intentionally does not apply migration 011 or exercise DB-backed booking operations. Enable persistence and wire the oxmysql adapter in a later runtime/config step before that gate.
+- The next controlled runtime gate is run from the open FXServer console with `setr nightshift_persistence true` followed by `restart gnsh-nightshift`; this is intentionally not marked complete until the server log confirms migration/DB bootstrap and the live client remains clean.
 
 ## Security / recovery / performance
 
@@ -64,7 +68,7 @@
 
 ## Known issues and deferred work
 
-- Migration `011_booking_core.sql` must be applied by the normal runner after persistence is enabled and the oxmysql adapter is injected; the current development-safe `persistence=false` setting defers it.
+- Migration `011_booking_core.sql` is applied by the normal runner after the `nightshift_persistence` opt-in; the current development-safe `persistence=false` setting defers it.
 - The current service reports a typed failure if timeline persistence fails after the booking update (`statePersisted=true`); a DB transaction wrapper can make this cross-table transition atomic in a later persistence hardening task.
 - Public network handlers, client UI, provider-specific reservation/location adapters, payments, settlement, and live player-flow tests remain deferred to the planned later sprints.
 
@@ -77,8 +81,9 @@
 - [x] Coordinated atomic reservations with rollback/idempotent release.
 - [x] Local contract, parse, manifest, and diff verification.
 - [x] Controlled live resource restart and client reload smoke.
+- [x] Runtime persistence opt-in and oxmysql bootstrap wiring contracts.
 - [ ] Persistence-enabled migration and DB-backed booking runtime smoke.
 
-**S05 Exit Gate: PASS for local contracts and resource reload. Stop before S06 until persistence-enabled migration/runtime smoke is scheduled.**
+**S05 Exit Gate: PASS for local contracts, resource reload, and runtime wiring. Stop before S06 until persistence-enabled migration/runtime smoke is confirmed.**
 - Implementation and review remain root-owned per the user's explicit no-subagent override; no child task was dispatched.
 - `dev` is the active development branch; `main` remains the release branch and is not modified.

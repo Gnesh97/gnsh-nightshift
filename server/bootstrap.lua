@@ -1,6 +1,76 @@
 NightShift = NightShift or {}
 
 local readiness = NightShift.Enums.Readiness
+
+local function copyValue(value, seen)
+    if NightShift.Validators and type(NightShift.Validators.copy) == 'function' then
+        return NightShift.Validators.copy(value)
+    end
+    if type(value) ~= 'table' then return value end
+    seen = seen or {}
+    if seen[value] then return seen[value] end
+    local output = {}
+    seen[value] = output
+    for key, item in pairs(value) do output[copyValue(key, seen)] = copyValue(item, seen) end
+    return output
+end
+
+local function readConvar(name, fallback)
+    local getConvar = rawget(_G, 'GetConvar')
+    if type(getConvar) ~= 'function' then return fallback end
+    local ok, value = pcall(getConvar, name, fallback)
+    return ok and value or fallback
+end
+
+local function persistenceConvarEnabled()
+    local value = tostring(readConvar('nightshift_persistence', 'false')):lower()
+    return value == 'true' or value == '1'
+end
+
+local function applyRuntimeConfig(source)
+    if type(source) ~= 'table' or not persistenceConvarEnabled() then return source end
+    local output = copyValue(source)
+    if rawget(output, 'features') == nil then
+        output.features = {}
+    elseif type(output.features) ~= 'table' then
+        return output
+    else
+        output.features = copyValue(output.features)
+    end
+    output.features.persistence = true
+    return output
+end
+
+local function oxMySqlAvailable()
+    local mysql = rawget(_G, 'MySQL')
+    if type(mysql) == 'table' then
+        for _, operation in ipairs({ 'query', 'single', 'scalar', 'insert', 'update', 'transaction' }) do
+            local target = rawget(mysql, operation)
+            if type(target) == 'function' or (type(target) == 'table' and type(target.await) == 'function') then
+                return true
+            end
+        end
+    end
+    local exports = rawget(_G, 'exports')
+    if exports == nil then return false end
+    local ok, oxmysql = pcall(function() return exports.oxmysql end)
+    return ok and oxmysql ~= nil
+end
+
+local function createRuntimeDatabaseAdapter()
+    if type(rawget(_G, 'GetConvar')) ~= 'function' or not oxMySqlAvailable() then return nil end
+    local database = NightShift.Database
+    local factory = type(database) == 'table' and database.OxMySQL or nil
+    if type(database) ~= 'table' or type(database.wrap) ~= 'function' or type(factory) ~= 'table' or type(factory.new) ~= 'function' then
+        return nil
+    end
+    local ok, driver = pcall(factory.new, {})
+    if not ok or type(driver) ~= 'table' then return nil end
+    local wrappedOk, adapter = pcall(database.wrap, driver)
+    if not wrappedOk or type(adapter) ~= 'table' or type(adapter.healthCheck) ~= 'function' then return nil end
+    return adapter
+end
+
 local defaultStages = {
     config = function(context, bootstrap)
         local options = bootstrap and bootstrap.options or {}
@@ -10,6 +80,7 @@ local defaultStages = {
         elseif type(options) == 'table' and rawget(options, 'config') ~= nil then
             source = rawget(options, 'config')
         end
+        source = applyRuntimeConfig(source)
         local resolver = options.resolveProvider
         if type(context) == 'table' and rawget(context, 'resolveProvider') ~= nil then
             resolver = rawget(context, 'resolveProvider')
@@ -47,8 +118,9 @@ local defaultStages = {
         if type(context) == 'table' and rawget(context, 'databaseAdapter') ~= nil then adapter = rawget(context, 'databaseAdapter') end
         if adapter == nil and type(context) == 'table' and rawget(context, 'database') ~= nil then adapter = rawget(context, 'database') end
         if adapter == nil then adapter = options.database end
+        local persistence = config.features and config.features.persistence == true
+        if adapter == nil and persistence then adapter = createRuntimeDatabaseAdapter() end
         if adapter == nil then
-            local persistence = config.features and config.features.persistence == true
             if config.environment == 'development' and not persistence then
                 return { ok = true, deferred = true, reason = 'database adapter not configured' }
             end
@@ -367,6 +439,8 @@ function Bootstrap:registerStopHook()
 end
 
 NightShift.ServerBootstrap = Bootstrap
+Bootstrap.applyRuntimeConfig = applyRuntimeConfig
+Bootstrap.createRuntimeDatabaseAdapter = createRuntimeDatabaseAdapter
 NightShift.Server = NightShift.Server or {}
 NightShift.Server.readiness = readiness.STARTING
 NightShift.Server.bootstrap = function(options, context)
