@@ -241,7 +241,9 @@ do
         permissionConfig = { permissions = { ['admin.manage'] = { jobs = { admin = 0 } } } }
     })
     check(ok and boot.repositories.repositories.workerProfile and boot.repositories.repositories.clientProfile, 'S04 bootstrap must construct profile repositories')
+    check(boot.repositories.repositories.booking and boot.repositories.repositories.bookingEvent, 'S05 bootstrap must construct booking repositories')
     check(boot.services.services.identity and boot.services.services.workerProfile and boot.services.services.clientProfile and boot.services.services.permissions, 'S04 bootstrap must construct identity/profile/permission services')
+    check(boot.services.services.bookingTimeline and boot.services.services.bookingReservation and boot.services.services.booking, 'S05 bootstrap must construct booking services')
 end
 
 print('NS-040..NS-043 tests passed: identity, player profiles, persistence, and centralized permissions')

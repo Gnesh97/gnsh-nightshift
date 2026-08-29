@@ -50,6 +50,14 @@ server_scripts {
     'server/services/client_profile_service.lua',
     'config/permissions.lua',
     'server/services/permission_service.lua',
+    'server/domain/booking.lua',
+    'server/repositories/booking_repository.lua',
+    'server/state/booking_state_machine.lua',
+    'server/repositories/booking_event_repository.lua',
+    'server/core/reservations.lua',
+    'server/services/booking_timeline_service.lua',
+    'server/services/booking_reservation_service.lua',
+    'server/services/booking_service.lua',
     'server/bootstrap.lua'
 }
 client_scripts {

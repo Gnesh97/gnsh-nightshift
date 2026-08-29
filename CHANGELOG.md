@@ -4,6 +4,17 @@ All notable changes to NightShift are documented here.
 
 ## [Unreleased]
 
+### S05 — Unified Booking Core
+
+- **NS-050:** Added one validated booking aggregate for player/NPC client and worker combinations, immutable service-package and quote/agreed-price snapshots, participant references, meeting/location data, lifecycle timestamps, idempotency, correlation, and external references.
+- **NS-051:** Added a server-side booking state machine with allowlisted transitions, terminal-state protection, version increments, transition guards, and bounded metadata.
+- **NS-052:** Added append-only, idempotent booking timeline events with state reconstruction and parameterized persistence.
+- **NS-053:** Added an ownership/permission-aware BookingService for draft, quote, offer, accept/decline, reservation, travel, trusted arrival/active/complete, settlement, cancellation, expiration, and interruption flows; catalog and quote authority fail closed when no server resolver is configured.
+- **NS-054:** Added ordered, TTL-bound, atomic reservation locks and provider compensation with idempotent retries and booking-scoped release.
+- Review hardening now preserves all resources across incremental reservation calls and keeps release idempotent without touching other bookings.
+- Added `sql/011_booking_core.sql`, migration/bootstrap wiring, S05 contract coverage, and the S05 sprint report.
+- Local S05 exit-gate tests pass; the already-running FiveM instance shows `gnsh-nightshift` loaded and oxmysql connected. A controlled `restart gnsh-nightshift` is still required to apply migration 011 and exercise the new checkout in the live runtime.
+
 ### S04 — Identity & Profiles
 
 - **NS-040:** Added server-side stable identity mapping from persistent player identifier plus character ID; reconnects refresh only ephemeral source mappings, while character switches/source reuse produce distinct keys and safe display aliases.

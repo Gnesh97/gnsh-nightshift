@@ -129,9 +129,13 @@ local defaultStages = {
         if type(database) ~= 'table' then return NightShift.Result.err(NightShift.Errors.Codes.DB_UNAVAILABLE, 'profile database adapter is invalid', { stage = 'repositories' }) end
         local worker = options.workerProfileRepository
         local client = options.clientProfileRepository
+        local booking = options.bookingRepository
+        local bookingEvent = options.bookingEventRepository
         if type(context) == 'table' then
             worker = rawget(context, 'workerProfileRepository') or worker
             client = rawget(context, 'clientProfileRepository') or client
+            booking = rawget(context, 'bookingRepository') or booking
+            bookingEvent = rawget(context, 'bookingEventRepository') or bookingEvent
         end
         if worker == nil and NightShift.Repositories and NightShift.Repositories.WorkerProfile then
             local created, err = NightShift.Repositories.WorkerProfile.new({ db = database })
@@ -143,8 +147,25 @@ local defaultStages = {
             if not created then return err end
             client = created
         end
-        if type(worker) ~= 'table' or type(client) ~= 'table' then return NightShift.Result.err(NightShift.Errors.Codes.REPOSITORY_INVALID, 'profile repositories are unavailable', { stage = 'repositories' }) end
-        return { ok = true, repositories = { workerProfile = worker, clientProfile = client } }
+        if booking == nil and NightShift.Repositories and NightShift.Repositories.Booking then
+            local created, err = NightShift.Repositories.Booking.new({ db = database })
+            if not created then return err end
+            booking = created
+        end
+        if bookingEvent == nil and NightShift.Repositories and NightShift.Repositories.BookingEvent then
+            local created, err = NightShift.Repositories.BookingEvent.new({ db = database })
+            if not created then return err end
+            bookingEvent = created
+        end
+        if type(worker) ~= 'table' or type(client) ~= 'table' or type(booking) ~= 'table' or type(bookingEvent) ~= 'table' then
+            return NightShift.Result.err(NightShift.Errors.Codes.REPOSITORY_INVALID, 'profile/booking repositories are unavailable', { stage = 'repositories' })
+        end
+        return { ok = true, repositories = {
+            workerProfile = worker,
+            clientProfile = client,
+            booking = booking,
+            bookingEvent = bookingEvent
+        } }
     end,
     services = function(context, bootstrap)
         local options = bootstrap and bootstrap.options or {}
@@ -189,11 +210,45 @@ local defaultStages = {
             permissions = created
         end
         if not identity or not worker or not client or not permissions then return { ok = true, deferred = true, reason = 'identity/profile services unavailable' } end
+        local bookingTimeline = options.bookingTimelineService
+        if bookingTimeline == nil and NightShift.BookingTimelineService and repositories.bookingEvent then
+            local created, err = NightShift.BookingTimelineService.new({ repository = repositories.bookingEvent, clock = options.clock })
+            if not created then return err end
+            bookingTimeline = created
+        end
+        local reservationService = options.bookingReservationService
+        if reservationService == nil and NightShift.BookingReservationService and NightShift.Reservations then
+            local locks, lockError = NightShift.Reservations.new({ clock = options.clock })
+            if not locks then return lockError end
+            local created, err = NightShift.BookingReservationService.new({ locks = locks, provider = options.reservationProvider, clock = options.clock })
+            if not created then return err end
+            reservationService = created
+        end
+        local booking = options.bookingService
+        if booking == nil and NightShift.BookingService and repositories.booking and bookingTimeline then
+            local created, err = NightShift.BookingService.new({
+                repository = repositories.booking,
+                timelineService = bookingTimeline,
+                reservationService = reservationService,
+                permissionService = permissions,
+                catalogResolver = options.catalogResolver,
+                quoteResolver = options.quoteResolver,
+                clock = options.clock
+            })
+            if not created then return err end
+            booking = created
+        end
+        if not bookingTimeline or not reservationService or not booking then
+            return { ok = true, deferred = true, reason = 'booking services unavailable' }
+        end
         return { ok = true, services = {
             identity = identity,
             workerProfile = worker,
             clientProfile = client,
-            permissions = permissions
+            permissions = permissions,
+            bookingTimeline = bookingTimeline,
+            bookingReservation = reservationService,
+            booking = booking
         } }
     end
 }
