@@ -17,6 +17,7 @@ All notable changes to NightShift are documented here.
 - Added a runtime-only `nightshift_persistence` convar opt-in that applies an immutable config copy and auto-wraps the oxmysql adapter when FiveM exposes it; the development default remains deferred and missing runtime database wiring still fails closed.
 - Added regression coverage for the runtime convar, oxmysql adapter normalization, and default bootstrap-to-migration wiring.
 - Added secret-free FiveM bootstrap diagnostics so resource logs identify `ready` versus typed startup failure, persistence status, database presence, and migration version.
+- Bootstrap diagnostics now include persistence/database/migration status directly in the console message, including an explicit `deferred` marker when the development DB gate is intentionally skipped.
 
 ### S04 — Identity & Profiles
 

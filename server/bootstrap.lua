@@ -451,19 +451,25 @@ local function logRuntimeBootstrap(ok, result)
     if ok then
         local configResult = type(result) == 'table' and result.config or {}
         local dbResult = type(result) == 'table' and result.db or {}
-        local config = configResult.config or configResult.value and configResult.value.config or {}
-        local migrations = dbResult.migrations or dbResult.value and dbResult.value.migrations or {}
-        local migrationValue = migrations.value or migrations
-        pcall(logger.info, logger, 'bootstrap', 'NightShift server ready', {
-            persistence = config.features and config.features.persistence == true,
-            database = dbResult.database ~= nil,
-            migrationVersion = migrationValue.currentVersion
+        local config = type(configResult) == 'table' and (configResult.config or configResult.value and configResult.value.config or {}) or {}
+        local migrations = type(dbResult) == 'table' and (dbResult.migrations or dbResult.value and dbResult.value.migrations or {}) or {}
+        local migrationValue = type(migrations) == 'table' and (migrations.value or migrations) or {}
+        local persistence = config.features and config.features.persistence == true
+        local database = type(dbResult) == 'table' and dbResult.database ~= nil
+        local migrationVersion = migrationValue.currentVersion or 'deferred'
+        pcall(logger.info, logger, 'bootstrap', ('NightShift server ready (persistence=%s database=%s migration=%s)'):format(tostring(persistence), tostring(database), tostring(migrationVersion)), {
+            persistence = persistence,
+            database = database,
+            migrationVersion = migrationVersion
         })
         return
     end
     local errorValue = type(result) == 'table' and (result.error or result) or {}
-    pcall(logger.error, logger, 'bootstrap', 'NightShift server startup failed', {
-        code = errorValue.code or 'BOOTSTRAP_FAILED',
+    if type(errorValue) ~= 'table' then errorValue = {} end
+    local code = errorValue.code or 'BOOTSTRAP_FAILED'
+    local stage = errorValue.stage or 'unknown'
+    pcall(logger.error, logger, 'bootstrap', ('NightShift server startup failed (code=%s stage=%s)'):format(tostring(code), tostring(stage)), {
+        code = code,
         stage = errorValue.stage,
         message = errorValue.message
     })
