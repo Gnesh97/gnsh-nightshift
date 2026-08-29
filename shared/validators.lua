@@ -19,6 +19,137 @@ local function ids(a,p,label)
     return r,s
 end
 
+local locationTypes = NightShift.Enums and NightShift.Enums.LocationTypes or {}
+local meetingModes = NightShift.Enums and NightShift.Enums.MeetingModes or {}
+local locationCategories = { configured=true, housing=true, motel=true, venue=true, vehicle=true, roadside=true, custom=true }
+local booleanValue
+
+local function token(value, maximum)
+    return type(value) == 'string' and #value <= (maximum or 160) and value:match('^[A-Za-z][A-Za-z0-9_.:%-]*$') ~= nil
+end
+
+local function normalizeLocation(raw, path)
+    if type(raw) ~= 'table' then return fail('INVALID_CONFIG', path, 'location must be a table') end
+    local allowed = {
+        id=true, locationRef=true, ref=true, key=true, locationType=true, type=true,
+        category=true, provider=true, worldTarget=true, world_target=true,
+        accessRequirements=true, access_requirements=true, meetingModes=true,
+        allowedMeetingModes=true, allowed_meeting_modes=true, maxTravelDistance=true,
+        max_travel_distance=true, blockedTags=true, blocked_tags=true, available=true,
+        reservable=true, version=true, recordId=true, record_id=true, idNumber=true,
+        createdAt=true, created_at=true, updatedAt=true, updated_at=true
+    }
+    for key in pairs(raw) do
+        if not allowed[key] then return fail('INVALID_CONFIG', path .. '.' .. tostring(key), 'location field is not allowlisted') end
+    end
+    local id = raw.id or raw.locationRef or raw.ref or raw.key
+    if not token(id, 160) then return fail('LOCATION_INVALID', path .. '.id', 'location reference is invalid') end
+    local kind = raw.locationType or raw.type
+    kind = kind == nil and 'CONFIG_LOCATION' or tostring(kind):upper()
+    if not locationTypes[kind] then return fail('LOCATION_INVALID', path .. '.type', 'location type is not supported') end
+    local category = raw.category
+    category = category == nil and ({
+        PROPERTY = 'housing', MOTEL_ROOM = 'motel', HOTEL_ROOM = 'motel',
+        VENUE_ROOM = 'venue', VEHICLE = 'vehicle', SAFE_ROADSIDE = 'roadside',
+        CUSTOM_PROVIDER = 'custom'
+    })[kind] or category
+    category = category == nil and 'configured' or tostring(category):lower()
+    if not locationCategories[category] then return fail('INVALID_CONFIG', path .. '.category', 'location category is invalid') end
+    local output = copy(raw)
+    output.id, output.locationRef, output.type, output.locationType, output.category = id, id, kind, kind, category
+    local target = raw.worldTarget or raw.world_target
+    if target ~= nil then
+        if type(target) ~= 'table' then return fail('LOCATION_TARGET_INVALID', path .. '.worldTarget', 'world target must be a table') end
+        local targetKind = target.kind or target.type or 'coords'
+        targetKind = tostring(targetKind):lower()
+        if targetKind ~= 'coords' and targetKind ~= 'provider' then return fail('LOCATION_TARGET_INVALID', path .. '.worldTarget.kind', 'world target kind is invalid') end
+        local normalizedTarget = { kind = targetKind }
+        if targetKind == 'coords' then
+            for _, axis in ipairs({ 'x', 'y', 'z' }) do
+                local limit = axis == 'z' and 10000 or 100000
+                if not finite(target[axis]) or math.abs(target[axis]) > limit then return fail('LOCATION_TARGET_INVALID', path .. '.worldTarget.' .. axis, 'world target coordinate is outside safe bounds') end
+                normalizedTarget[axis] = target[axis]
+            end
+            if target.heading ~= nil then
+                if not finite(target.heading) or math.abs(target.heading) > 360 then return fail('LOCATION_TARGET_INVALID', path .. '.worldTarget.heading', 'world target heading is invalid') end
+                normalizedTarget.heading = target.heading
+            end
+        elseif target.provider ~= nil then
+            if not token(target.provider, 64) then return fail('LOCATION_TARGET_INVALID', path .. '.worldTarget.provider', 'world target provider is invalid') end
+            normalizedTarget.provider = target.provider
+        end
+        output.worldTarget, output.world_target = normalizedTarget, copy(normalizedTarget)
+    end
+    local modes = raw.meetingModes or raw.allowedMeetingModes or raw.allowed_meeting_modes or {}
+    local modeOk, modeError = array(modes, path .. '.meetingModes', 'meeting modes')
+    if not modeOk then return nil, modeError end
+    local normalizedModes, seenModes = {}, {}
+    for index, mode in ipairs(modes) do
+        local normalizedMode = type(mode) == 'string' and mode:upper() or nil
+        if not normalizedMode or not meetingModes[normalizedMode] or seenModes[normalizedMode] then
+            return fail('INVALID_CONFIG', path .. '.meetingModes[' .. index .. ']', 'meeting mode is invalid or duplicated')
+        end
+        seenModes[normalizedMode] = true
+        normalizedModes[index] = normalizedMode
+    end
+    output.meetingModes, output.allowedMeetingModes = normalizedModes, copy(normalizedModes)
+    local requirements = raw.accessRequirements or raw.access_requirements or {}
+    if type(requirements) ~= 'table' then return fail('LOCATION_INVALID', path .. '.accessRequirements', 'access requirements must be a table') end
+    local normalizedRequirements = {}
+    local allowedRequirements = { public=true, owner=true, permission=true, ace=true, minGrade=true, min_grade=true }
+    for key, value in pairs(requirements) do
+        if not allowedRequirements[key] then return fail('LOCATION_INVALID', path .. '.accessRequirements.' .. tostring(key), 'access requirement is not allowlisted') end
+        if key == 'public' or key == 'owner' then
+            if type(value) ~= 'boolean' then return fail('LOCATION_INVALID', path .. '.accessRequirements.' .. tostring(key), 'access requirement must be boolean') end
+        elseif key == 'minGrade' or key == 'min_grade' then
+            if not finite(value) or value < 0 or value ~= math.floor(value) then return fail('LOCATION_INVALID', path .. '.accessRequirements.' .. tostring(key), 'minimum grade must be a non-negative integer') end
+        elseif not token(value, 96) then
+            return fail('LOCATION_INVALID', path .. '.accessRequirements.' .. tostring(key), 'access requirement value is invalid')
+        end
+        normalizedRequirements[key == 'min_grade' and 'minGrade' or key] = value
+    end
+    output.accessRequirements, output.access_requirements = normalizedRequirements, copy(normalizedRequirements)
+    local maxDistance = raw.maxTravelDistance or raw.max_travel_distance
+    if maxDistance ~= nil and (not finite(maxDistance) or maxDistance <= 0 or maxDistance > 100000) then
+        return fail('LOCATION_INVALID', path .. '.maxTravelDistance', 'maximum travel distance is invalid')
+    end
+    output.maxTravelDistance = maxDistance
+    local tags = raw.blockedTags or raw.blocked_tags or {}
+    local tagsOk, tagsError = array(tags, path .. '.blockedTags', 'blocked tags')
+    if not tagsOk then return nil, tagsError end
+    local normalizedTags, seenTags = {}, {}
+    for index, tag in ipairs(tags) do
+        local normalizedTag = type(tag) == 'string' and tag:upper() or nil
+        if not normalizedTag or not token(normalizedTag, 64) or seenTags[normalizedTag] then return fail('LOCATION_INVALID', path .. '.blockedTags[' .. index .. ']', 'blocked tag is invalid or duplicated') end
+        seenTags[normalizedTag] = true
+        normalizedTags[index] = normalizedTag
+    end
+    output.blockedTags = normalizedTags
+    local available, availableError = booleanValue(raw.available, path .. '.available', true)
+    if available == nil then return nil, availableError end
+    local reservable, reservableError = booleanValue(raw.reservable, path .. '.reservable', true)
+    if reservable == nil then return nil, reservableError end
+    output.available, output.reservable = available, reservable
+    if raw.provider ~= nil and not token(raw.provider, 64) then return fail('LOCATION_INVALID', path .. '.provider', 'location provider is invalid') end
+    return output
+end
+
+local function validateLocations(raw)
+    if raw == nil then raw = NightShift.LocationConfig end
+    if raw == nil then raw = {} end
+    local normalized, seen = {}, {}
+    local ok, arrayError = array(raw, 'locations', 'locations')
+    if not ok then return nil, arrayError end
+    for index, location in ipairs(raw) do
+        local value, valueError = normalizeLocation(location, 'locations[' .. index .. ']')
+        if not value then return nil, valueError end
+        if seen[value.id] then return fail('DUPLICATE_ID', 'locations[' .. index .. '].id', 'duplicate location ID') end
+        seen[value.id] = true
+        normalized[index] = value
+    end
+    return normalized, seen
+end
+
 local function currency(value, path, fallback)
     value = value == nil and fallback or value
     if type(value) ~= 'string' then return fail('INVALID_CONFIG', path, 'currency must be a three-letter code') end
@@ -27,7 +158,7 @@ local function currency(value, path, fallback)
     return value
 end
 
-local function booleanValue(value, path, fallback)
+booleanValue = function(value, path, fallback)
     value = value == nil and fallback or value
     if type(value) ~= 'boolean' then return fail('INVALID_CONFIG', path, 'value must be boolean') end
     return value
@@ -195,7 +326,7 @@ function V.validateConfig(input, options)
     local features=copy(NightShift.FeatureDefaults); local rf=rawget(input,'features'); if rf~=nil then if type(rf)~='table' then return fail('INVALID_CONFIG','features','features must be a table') end; for k,v in pairs(rf) do if type(features[k])~='boolean' or type(v)~='boolean' then return fail('INVALID_CONFIG','features.'..tostring(k),'feature flags must be boolean') end; features[k]=v end end; out.features=features
     local rp=rawget(input,'servicePackages'); if rp==nil then rp=rawget(input,'packages') end; local packages,ps=ids(rp==nil and {} or rp,'servicePackages','service package'); if not packages then return nil,ps end
     for i,pkg in ipairs(packages) do local price=rawget(pkg,'price'); if price==nil then price=rawget(pkg,'priceMinor') end; if not integer(price) then return fail('INVALID_PRICE','servicePackages['..i..'].price','price must be a positive integer in minor units') end; pkg.price=price; if not positive(pkg.duration) then return fail('INVALID_DURATION','servicePackages['..i..'].duration','duration must be positive') end; local refs=rawget(pkg,'locationIds'); if refs==nil then refs=rawget(pkg,'location_ids') end; if refs==nil then refs=rawget(pkg,'locations') end; refs=refs==nil and {} or refs; local rok,re=array(refs,'servicePackages['..i..'].locationIds','location references'); if not rok then return nil,re end; local rs={}; for j,id in ipairs(refs) do if not text(id) or rs[id] then return fail('INVALID_LOCATION_REFERENCE','servicePackages['..i..'].locationIds['..j..']','location reference must be unique and non-empty') end; rs[id]=true end; pkg.locationIds=copy(refs); if pkg.provider~=nil and (not text(pkg.provider) or not registry[pkg.provider]) then return fail('UNKNOWN_PROVIDER','servicePackages['..i..'].provider','provider reference is not allowlisted') end end; out.servicePackages=packages
-    local rl=rawget(input,'locations'); local locations,ls=ids(rl==nil and {} or rl,'locations','location'); if not locations then return nil,ls end; local categories={configured=true,housing=true,motel=true,venue=true,vehicle=true}; for i,l in ipairs(locations) do if not text(l.category) or not categories[l.category] then return fail('INVALID_CONFIG','locations['..i..'].category','location category is invalid') end end; out.locations=locations; for i,pkg in ipairs(packages) do for j,id in ipairs(pkg.locationIds) do if not ls[id] then return fail('INVALID_LOCATION_REFERENCE','servicePackages['..i..'].locationIds['..j..']','location reference is not allowlisted') end end end
+    local locations,ls=validateLocations(rawget(input,'locations')); if not locations then return nil,ls end; out.locations=locations; for i,pkg in ipairs(packages) do for j,id in ipairs(pkg.locationIds) do if not ls[id] then return fail('INVALID_LOCATION_REFERENCE','servicePackages['..i..'].locationIds['..j..']','location reference is not allowlisted') end end end
     local catalog, catalogError = validateServiceCatalog(rawget(input, 'serviceCatalog'), locations); if not catalog then return nil, catalogError end; out.serviceCatalog = catalog
     local pricing, pricingError = validatePricing(rawget(input, 'pricing')); if not pricing then return nil, pricingError end; out.pricing = pricing
     local cancellation, cancellationError = validateCancellation(rawget(input, 'cancellation')); if not cancellation then return nil, cancellationError end; out.cancellation = cancellation

@@ -205,6 +205,8 @@ local defaultStages = {
         local bookingEvent = options.bookingEventRepository
         local deposit = options.depositRepository
         local payment = options.paymentRepository
+        local location = options.locationRepository
+        local locationReservation = options.locationReservationRepository
         if type(context) == 'table' then
             worker = rawget(context, 'workerProfileRepository') or worker
             client = rawget(context, 'clientProfileRepository') or client
@@ -212,6 +214,8 @@ local defaultStages = {
             bookingEvent = rawget(context, 'bookingEventRepository') or bookingEvent
             deposit = rawget(context, 'depositRepository') or deposit
             payment = rawget(context, 'paymentRepository') or payment
+            location = rawget(context, 'locationRepository') or location
+            locationReservation = rawget(context, 'locationReservationRepository') or locationReservation
         end
         if worker == nil and NightShift.Repositories and NightShift.Repositories.WorkerProfile then
             local created, err = NightShift.Repositories.WorkerProfile.new({ db = database })
@@ -243,6 +247,16 @@ local defaultStages = {
             if not created then return err end
             payment = created
         end
+        if location == nil and NightShift.Repositories and NightShift.Repositories.Location then
+            local created, err = NightShift.Repositories.Location.new({ db = database })
+            if not created then return err end
+            location = created
+        end
+        if locationReservation == nil and NightShift.Repositories and NightShift.Repositories.LocationReservation then
+            local created, err = NightShift.Repositories.LocationReservation.new({ db = database })
+            if not created then return err end
+            locationReservation = created
+        end
         if type(worker) ~= 'table' or type(client) ~= 'table' or type(booking) ~= 'table' or type(bookingEvent) ~= 'table' then
             return NightShift.Result.err(NightShift.Errors.Codes.REPOSITORY_INVALID, 'profile/booking repositories are unavailable', { stage = 'repositories' })
         end
@@ -252,7 +266,9 @@ local defaultStages = {
             booking = booking,
             bookingEvent = bookingEvent,
             deposit = deposit,
-            payment = payment
+            payment = payment,
+            location = location,
+            locationReservation = locationReservation
         } }
     end,
     services = function(context, bootstrap)
@@ -269,8 +285,64 @@ local defaultStages = {
         if type(context) == 'table' then framework = rawget(context, 'frameworkAdapter') or framework end
         if type(context) == 'table' then money = rawget(context, 'moneyAdapter') or rawget(context, 'money') or money end
         local databaseDeferred = repositoryResult.deferred == true
+        local vehicleLocation = options.vehicleLocationService
+        if vehicleLocation == nil and NightShift.VehicleLocationService and type(options.getVehicle) == 'function' then
+            local created, err = NightShift.VehicleLocationService.new({
+                getVehicle = options.getVehicle,
+                hasAccess = options.vehicleAccessCheck,
+                isAllowedZone = options.vehicleZoneCheck,
+                waterCheck = options.locationWaterCheck,
+                bookingLookup = options.vehicleBookingLookup,
+                assignmentCheck = options.vehicleAssignmentCheck,
+                npcNearby = options.vehicleNpcNearby,
+                clock = options.clock,
+                maxSpeed = options.vehicleMaxSpeed,
+                requirePrivate = options.vehicleRequirePrivate
+            })
+            if not created then return err end
+            vehicleLocation = created
+        end
+        local locationService = options.locationService
+        if locationService == nil and NightShift.LocationService then
+            local locationProviders = providers.optional or providers
+            local created, err = NightShift.LocationService.new({
+                locations = config.locations,
+                repository = repositories.location,
+                providers = options.locationProviders or locationProviders,
+                clock = options.clock,
+                accessCheck = options.locationAccessCheck,
+                zoneCheck = options.locationZoneCheck,
+                interiorCheck = options.locationInteriorCheck,
+                waterCheck = options.locationWaterCheck,
+                routeCheck = options.locationRouteCheck,
+                vehicleService = vehicleLocation
+            })
+            if not created then return err end
+            locationService = created
+        end
+        local locationReservation = options.locationReservationService
+        if locationReservation == nil and locationService and NightShift.LocationReservationService then
+            local locks = options.locationLocks
+            if locks == nil and NightShift.Reservations then
+                local created, err = NightShift.Reservations.new({ clock = options.clock, defaultTtl = options.locationReservationTtl or 300 })
+                if not created then return err end
+                locks = created
+            end
+            local created, err = NightShift.LocationReservationService.new({
+                locationService = locationService,
+                repository = repositories.locationReservation,
+                locks = locks,
+                providers = options.locationProviders or providers.optional or providers,
+                clock = options.clock,
+                defaultTtl = options.locationReservationTtl
+            })
+            if not created then return err end
+            locationReservation = created
+        end
         if framework == nil or databaseDeferred then
-            return { ok = true, deferred = true, reason = framework == nil and 'framework adapter not configured' or 'profile repositories deferred' }
+            return { ok = true, deferred = true, reason = framework == nil and 'framework adapter not configured' or 'profile repositories deferred', services = {
+                location = locationService, locationReservation = locationReservation, vehicleLocation = vehicleLocation
+            } }
         end
         local catalog = options.serviceCatalog
         if catalog == nil and features.serviceCatalog ~= false and NightShift.ServiceCatalog then
@@ -328,7 +400,11 @@ local defaultStages = {
             if not created then return err end
             permissions = created
         end
-        if not identity or not worker or not client or not permissions then return { ok = true, deferred = true, reason = 'identity/profile services unavailable' } end
+        if not identity or not worker or not client or not permissions then
+            return { ok = true, deferred = true, reason = 'identity/profile services unavailable', services = {
+                location = locationService, locationReservation = locationReservation, vehicleLocation = vehicleLocation
+            } }
+        end
         local bookingTimeline = options.bookingTimelineService
         if bookingTimeline == nil and NightShift.BookingTimelineService and repositories.bookingEvent then
             local created, err = NightShift.BookingTimelineService.new({ repository = repositories.bookingEvent, clock = options.clock })
@@ -352,6 +428,7 @@ local defaultStages = {
                 permissionService = permissions,
                 catalogResolver = options.catalogResolver or catalog,
                 quoteResolver = options.quoteResolver or pricing,
+                locationResolver = locationService,
                 clock = options.clock
             })
             if not created then return err end
@@ -369,7 +446,9 @@ local defaultStages = {
             refund = created
         end
         if not bookingTimeline or not reservationService or not booking then
-            return { ok = true, deferred = true, reason = 'booking services unavailable' }
+            return { ok = true, deferred = true, reason = 'booking services unavailable', services = {
+                location = locationService, locationReservation = locationReservation, vehicleLocation = vehicleLocation
+            } }
         end
         return { ok = true, services = {
             identity = identity,
@@ -383,7 +462,10 @@ local defaultStages = {
             pricing = pricing,
             deposit = deposit,
             settlement = settlement,
-            refund = refund
+            refund = refund,
+            location = locationService,
+            locationReservation = locationReservation,
+            vehicleLocation = vehicleLocation
         } }
     end
 }

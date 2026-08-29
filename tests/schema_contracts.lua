@@ -11,7 +11,8 @@ local files = {
     '009_indexes.sql',
     '010_identity_profiles.sql',
     '011_booking_core.sql',
-    '012_pricing_snapshots.sql'
+    '012_pricing_snapshots.sql',
+    '013_location_resolver.sql'
 }
 
 local contents, allParts = {}, {}
@@ -42,4 +43,6 @@ check(contents['010_identity_profiles.sql']:find('professionalism', 1, true) ~= 
 check(contents['010_identity_profiles.sql']:find('deposit_risk_score', 1, true) ~= nil, 'client deposit risk fields missing')
 check(contents['011_booking_core.sql']:find('client_type', 1, true) ~= nil, 'booking participant columns missing')
 check(contents['011_booking_core.sql']:find('old_state', 1, true) ~= nil, 'booking timeline state columns missing')
-check(#NightShift.Migrations.DefinitionFiles == 12, 'S06 pricing snapshot migration must be registered')
+check(contents['013_location_resolver.sql']:find('location_type', 1, true) ~= nil, 'typed location columns missing')
+check(contents['013_location_resolver.sql']:find('active_key', 1, true) ~= nil, 'atomic location reservation key missing')
+check(#NightShift.Migrations.DefinitionFiles == 13, 'S07 location resolver migration must be registered')

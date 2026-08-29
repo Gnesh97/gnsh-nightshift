@@ -178,5 +178,5 @@ do
         end
     })
     local result = runner:run()
-    check(result.ok and result.value.currentVersion == 12 and #result.value.applied == 12, 'registered SQL migrations must run from default definitions')
+    check(result.ok and result.value.currentVersion == 13 and #result.value.applied == 13, 'registered SQL migrations must run from default definitions')
 end

@@ -4,6 +4,15 @@ All notable changes to NightShift are documented here.
 
 ## [Unreleased]
 
+### S07 — Typed Locations, Atomic Location Holds & Vehicle Resolution
+
+- **NS-070:** Added server-owned typed location descriptors for motel/hotel rooms, properties, venue rooms, vehicles, configured locations, safe roadside points, and custom providers. Definitions normalize immutable world targets, access requirements, meeting modes, travel limits, blocked tags, availability, and reservability.
+- **NS-071:** Added a capability-aware location resolver that accepts only registered typed references, validates provider registration/access/blocked zones/safe targets/route feasibility, and ignores arbitrary client coordinates.
+- **NS-072:** Added location-scoped atomic reservation holds with deterministic booking idempotency keys, TTL expiry, occupy/release owner checks, provider mirror compensation, and a database unique active key for cross-process races.
+- **NS-073:** Added server-bound vehicle location resolution with visibility, access, stationary/private vehicle, allowed-zone, safe-position, and optional booking-binding checks; client vehicle coordinates are ignored.
+- Added migration sql/013_location_resolver.sql, location/reservation repositories, bootstrap wiring, BookingService location binding, and S07 contract coverage.
+- Local full contract suite, Lua parser, and diff checks pass. Live location/provider/vehicle player smoke remains the next FiveM gate after the resource restart.
+
 ### S06 — Pricing, Settlement, Deposit & Refund
 
 - **NS-060:** Added a configurable server-owned service catalog for SHORT/STANDARD/PREMIUM/PRIVATE/VIP packages, base price/duration/reputation requirements, meeting/location compatibility, feature gating, and fail-closed BookingService package resolution.

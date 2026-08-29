@@ -116,6 +116,7 @@ function Service.new(options)
         _state = stateMachine,
         _timeline = timeline,
         _reservation = options.reservationService,
+        _locationResolver = options.locationResolver or options.locationService,
         _catalogResolver = options.catalogResolver or options.resolveServicePackage,
         _quote = options.quoteResolver or options.resolveQuote or options.pricingService,
         _authorize = options.authorize,
@@ -194,6 +195,25 @@ function Service:createDraft(actor, input)
     if existing.ok then return Result.ok(copy(existing.value), { idempotent = true }) end
     if not notFound(existing) then return existing end
 
+    local resolvedLocation
+    local resolvedMeetingMode
+    if self._locationResolver and (input.locationType ~= nil or input.locationRef ~= nil or input.locationId ~= nil) then
+        if type(self._locationResolver) ~= 'table' or type(self._locationResolver.resolve) ~= 'function' then
+            return Result.err(Codes.LOCATION_INVALID, 'booking location resolver is unavailable')
+        end
+        local locationRequest = copy(input)
+        locationRequest.locationType = input.locationType or input.type
+        locationRequest.locationRef = input.locationRef or input.locationId
+        local ok, locationResult = pcall(self._locationResolver.resolve, self._locationResolver, normalizedActor.source, locationRequest)
+        if not ok or type(locationResult) ~= 'table' then return Result.err(Codes.LOCATION_INVALID, 'booking location resolver failed') end
+        if not locationResult.ok then return locationResult end
+        resolvedLocation = locationResult.value and (locationResult.value.location or locationResult.value)
+        resolvedMeetingMode = locationResult.value and locationResult.value.meetingMode or resolvedLocation and resolvedLocation.meetingMode
+        if type(resolvedLocation) ~= 'table' or not text(resolvedLocation.locationType or resolvedLocation.type, 32) or not text(resolvedLocation.locationRef or resolvedLocation.id, 160) then
+            return Result.err(Codes.LOCATION_INVALID, 'booking location resolver returned an invalid location')
+        end
+    end
+
     local values = {
         idempotencyKey = idempotencyKey,
         initiatorType = input.initiatorType or normalizedActor.type,
@@ -202,9 +222,9 @@ function Service:createDraft(actor, input)
         workerType = input.workerType,
         workerRef = input.workerRef,
         servicePackage = package,
-        meetingMode = input.meetingMode,
-        locationType = input.locationType,
-        locationRef = input.locationRef,
+        meetingMode = input.meetingMode or resolvedMeetingMode,
+        locationType = resolvedLocation and (resolvedLocation.locationType or resolvedLocation.type) or input.locationType,
+        locationRef = resolvedLocation and (resolvedLocation.locationRef or resolvedLocation.id) or input.locationRef,
         scheduledAt = input.scheduledAt,
         correlationId = input.correlationId,
         externalReference = input.externalReference,

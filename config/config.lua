@@ -9,7 +9,7 @@ NightShift.DefaultConfig = {
     servicePackages = {
         { id = 'standard', price = 100, duration = 30, locationIds = { 'configured_default' } }
     },
-    locations = { { id = 'configured_default', category = 'configured' } },
+    locations = NightShift.LocationConfig,
     npcProfiles = { { id = 'default_profile', availability = 'deferred' } },
     serviceCatalog = NightShift.ServiceCatalogConfig,
     pricing = NightShift.PricingConfig,
