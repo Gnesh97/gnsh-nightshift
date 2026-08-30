@@ -13,6 +13,8 @@ or completion state is trusted.
   for bounded NPC offers, worker counters, patience/round limits, acceptance,
   decline/walk-away, expiry, ownership checks, idempotency, and frozen accepted
   price snapshots.
+- Worker identity references accept the canonical length-prefixed identity keys
+  emitted by the FiveM/QBCore identity service.
 - **NS-111:** Added the WorkerModeService bridge from a claimed NPC customer to
   the canonical BookingService. It selects registered packages/locations,
   applies an authoritative negotiated quote, creates the normal booking

@@ -28,6 +28,13 @@ do
     s11Check(not replay.ok and replay.error.code == 'NEGOTIATION_CONFLICT', 'terminal negotiation must reject replayed counters')
     local remote = service:get(offer.id)
     s11Check(remote.ok and remote.value.workerIdentity == 'player:7', 'negotiation must retain worker binding')
+    local identityActor = { type = 'PLAYER', ref = '21:license:abc123|4:char', source = 7 }
+    local identityNegotiation = service:createOffer(identityActor, {
+        id = 'neg-identity', opportunityKey = 'customer-opportunity:7:identity', customerProfileKey = 'npc-customer:7:identity',
+        servicePackageId = 'standard', basePriceMinor = 500, currency = 'USD', budgetClass = 3,
+        priceClass = 3, demandBand = 'NORMAL'
+    })
+    s11Check(identityNegotiation.ok and identityNegotiation.value.workerIdentity == identityActor.ref, 'canonical identity keys must be accepted by negotiation')
     local expired, expiredError = service:createOffer(actor, {
         id = 'neg-expired', opportunityKey = 'customer-opportunity:7:2', customerProfileKey = 'npc-customer:7:2',
         servicePackageId = 'standard', basePriceMinor = 500, currency = 'USD', budgetClass = 3, priceClass = 3,

@@ -29,6 +29,8 @@ All notable changes to NightShift are documented here.
 - Smoke registration now reuses the existing S10 development opt-in for S11,
   including hosts that report an unset S11 convar as `false`, so moving between
   sprint smoke suites does not require another `server.cfg` setting.
+- Fixed negotiation worker-reference validation for the canonical QBCore/FiveM
+  identity key format (`length:identifier|length:character`).
 - Local full Lua contracts, parser checks, and `git diff --check` pass. Live
   FiveM player/session/proximity/settlement smoke remains the operator runtime
   gate; restart commands are intentionally left to the server operator.
