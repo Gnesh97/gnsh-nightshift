@@ -11,7 +11,7 @@ All notable changes to NightShift are documented here.
 - **NS-102:** Added bounded NPC customer opportunity generation for explicitly AVAILABLE workers, district/zone eligibility, generation cooldowns, logical CUSTOMER profiles, claim/dismiss/expiry lifecycle, and per-worker/global capacity limits. Client candidates remain minimal logical DTOs; physical mapping is opt-in and on demand.
 - **NS-103:** Added server-owned AVAILABLE/BUSY/OFFLINE worker availability with optional framework duty checks, booking locks, idempotent transitions, profile persistence hook, and logout reset handling.
 - Added S10 shared enums/error/schema validation, bootstrap/manifest wiring, client candidate sanitization, and regression coverage for no-worker, oversupply, Friday high-demand, duty, cooldown, capacity, claim, and privacy boundaries. No database migration is required.
-- Local S10/full Lua contracts, parser checks, and `git diff --check` pass. Live worker opt-in/customer candidate smoke remains the next FiveM runtime gate; S11 negotiation is intentionally not started.
+- Local S10/full Lua contracts, parser checks, and `git diff --check` pass. The development config now enables demand for the controlled FiveM worker opt-in/customer candidate smoke; S11 negotiation is intentionally not started.
 
 ### S09 — NPC Travel, Streaming & Entity Control
 

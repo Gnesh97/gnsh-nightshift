@@ -36,12 +36,11 @@ profiles do not imply a world entity or client-owned coordinates.
 
 ## Runtime Gate
 
-The resource remains safe to start with the development default
-(`features.demand=false`); S10 services are wired but customer generation is
-disabled until demand is explicitly enabled. The next controlled FiveM smoke
-should enable the feature, opt a worker into availability, and verify one
-logical customer candidate plus cooldown/capacity behavior. S11 negotiation is
-not part of this sprint.
+The development config now enables `features.demand` for a controlled smoke.
+Restart the resource, opt a worker into availability, and verify one logical
+customer candidate plus cooldown/capacity behavior. Persistence remains
+independently controlled by its existing convar. S11 negotiation is not part
+of this sprint.
 
 ## Exit Gate
 
