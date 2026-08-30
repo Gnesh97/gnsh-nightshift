@@ -82,6 +82,12 @@ do
     local zeroDateRoundTrip = assert(Booking.fromRow(databaseRow))
     check(zeroDateRoundTrip.quote.expiresAt == nil, 'zero-date DATETIME strings must be treated as absent nullable timestamps')
 
+    local nullSentinelRow = copy(databaseRow)
+    nullSentinelRow.quote_minor, nullSentinelRow.quote_currency, nullSentinelRow.quote_id = false, false, false
+    nullSentinelRow.agreed_price_minor, nullSentinelRow.agreed_currency, nullSentinelRow.agreed_quote_id = false, false, false
+    local nullSentinelRoundTrip = assert(Booking.fromRow(nullSentinelRow))
+    check(nullSentinelRoundTrip.quote == nil and nullSentinelRoundTrip.agreedPrice == nil, 'false SQL NULL sentinels must map to absent price snapshots')
+
     local invalid, invalidError = Booking.new(bookingInput({ clientType = 'PLAYER', clientRef = '' }))
     check(not invalid and invalidError.error.code == NightShift.Errors.Codes.BOOKING_INVALID, 'invalid participant ref must fail closed')
 end

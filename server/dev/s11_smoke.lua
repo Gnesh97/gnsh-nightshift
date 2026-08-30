@@ -65,7 +65,16 @@ local function report(label, result)
     if type(result) ~= 'table' then print(('[gnsh-nightshift] S11 %s failed: invalid service result'):format(label)); return end
     if result.ok ~= true then
         local errorValue = result.error or result
-        print(('[gnsh-nightshift] S11 %s failed: code=%s message=%s'):format(label, tostring(errorValue.code or 'UNKNOWN'), tostring(errorValue.message or 'unknown error')))
+        local details = errorValue.details
+        local cause = type(details) == 'table' and details.cause or nil
+        local causeMessage = type(details) == 'table' and details.causeMessage or nil
+        local causeDetails = type(details) == 'table' and details.causeDetails or nil
+        local field = type(causeDetails) == 'table' and causeDetails.field or nil
+        local suffix = ''
+        if cause then suffix = suffix .. (' cause=%s'):format(tostring(cause)) end
+        if causeMessage then suffix = suffix .. (' causeMessage=%s'):format(tostring(causeMessage)) end
+        if field then suffix = suffix .. (' field=%s'):format(tostring(field)) end
+        print(('[gnsh-nightshift] S11 %s failed: code=%s message=%s%s'):format(label, tostring(errorValue.code or 'UNKNOWN'), tostring(errorValue.message or 'unknown error'), suffix))
         return
     end
     local value = type(result.value) == 'table' and result.value or {}

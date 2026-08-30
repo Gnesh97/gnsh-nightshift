@@ -86,6 +86,14 @@ local function normalizeRowTimestamp(value)
     return value
 end
 
+-- oxmysql can expose SQL NULL as false on some adapter/runtime combinations.
+-- Treat that sentinel as NULL only while decoding database rows; false remains
+-- invalid for normal domain inputs.
+local function normalizeRowNullable(value)
+    if value == false then return nil end
+    return value
+end
+
 local function normalizeCurrency(value, field)
     value = type(value) == 'string' and value:upper() or value
     if type(value) ~= 'string' or value:match('^[A-Z][A-Z][A-Z]$') == nil then
@@ -324,12 +332,16 @@ end
 
 function Booking.fromRow(row)
     if type(row) ~= 'table' then return nil, invalid('booking row must be a table') end
-    local package = { id = row.service_package_id or row.servicePackageId, priceMinor = row.price_minor, currency = row.currency }
-    local clientType = row.client_type or row.clientType or (row.client_profile_id and 'PLAYER' or 'NPC')
-    local workerType = row.worker_type or row.workerType or (row.worker_profile_id and 'PLAYER' or 'NPC')
-    local clientRef = row.client_ref or row.clientRef or row.client_profile_id
-    local workerRef = row.worker_ref or row.workerRef or row.worker_profile_id or row.npc_worker_id
-    local locationRef = row.location_ref or row.locationRef or row.location_id
+    local package = {
+        id = normalizeRowNullable(row.service_package_id or row.servicePackageId),
+        priceMinor = normalizeRowNullable(row.price_minor),
+        currency = normalizeRowNullable(row.currency)
+    }
+    local clientType = normalizeRowNullable(row.client_type or row.clientType) or (normalizeRowNullable(row.client_profile_id) and 'PLAYER' or 'NPC')
+    local workerType = normalizeRowNullable(row.worker_type or row.workerType) or (normalizeRowNullable(row.worker_profile_id) and 'PLAYER' or 'NPC')
+    local clientRef = normalizeRowNullable(row.client_ref or row.clientRef or row.client_profile_id)
+    local workerRef = normalizeRowNullable(row.worker_ref or row.workerRef or row.worker_profile_id or row.npc_worker_id)
+    local locationRef = normalizeRowNullable(row.location_ref or row.locationRef or row.location_id)
     if clientRef ~= nil then clientRef = tostring(clientRef) end
     if workerRef ~= nil then workerRef = tostring(workerRef) end
     if locationRef ~= nil then locationRef = tostring(locationRef) end
@@ -354,8 +366,19 @@ function Booking.fromRow(row)
         meetingMode = row.meeting_mode or row.mode or 'IN_PERSON',
         locationType = row.location_type or row.locationType or (locationRef and 'LEGACY' or nil),
         locationRef = locationRef,
-        quote = row.quote_minor ~= nil and { amountMinor = row.quote_minor, currency = row.quote_currency or row.currency, quotedAt = quotedAt, quoteId = row.quote_id, expiresAt = quoteExpiresAt } or nil,
-        agreedPrice = row.agreed_price_minor ~= nil and { amountMinor = row.agreed_price_minor, currency = row.agreed_currency or row.currency, agreedAt = agreedAt, quoteId = row.agreed_quote_id } or nil,
+        quote = normalizeRowNullable(row.quote_minor) ~= nil and {
+            amountMinor = normalizeRowNullable(row.quote_minor),
+            currency = normalizeRowNullable(row.quote_currency) or package.currency,
+            quotedAt = quotedAt,
+            quoteId = normalizeRowNullable(row.quote_id),
+            expiresAt = quoteExpiresAt
+        } or nil,
+        agreedPrice = normalizeRowNullable(row.agreed_price_minor) ~= nil and {
+            amountMinor = normalizeRowNullable(row.agreed_price_minor),
+            currency = normalizeRowNullable(row.agreed_currency) or package.currency,
+            agreedAt = agreedAt,
+            quoteId = normalizeRowNullable(row.agreed_quote_id)
+        } or nil,
         scheduledAt = scheduledAt,
         startAt = startAt,
         endAt = endAt,

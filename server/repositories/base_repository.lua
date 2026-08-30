@@ -94,7 +94,15 @@ function Base:_map(row)
     local ok, mapped = pcall(self._mapper, copy(row))
     if not ok or mapped == nil then return nil, mapError('repository row mapper failed') end
     if type(mapped) == 'table' and mapped.ok ~= nil then
-        if mapped.ok ~= true then return nil, mapError('repository row mapper returned an error', { cause = mapped.error and mapped.error.code }) end
+        if mapped.ok ~= true then
+            local source = mapped.error or mapped
+            local details = source and source.details
+            return nil, mapError('repository row mapper returned an error', {
+                cause = source and source.code or nil,
+                causeMessage = source and source.message or nil,
+                causeDetails = type(details) == 'table' and details or nil
+            })
+        end
         mapped = mapped.value
     end
     if type(mapped) ~= 'table' then return nil, mapError('repository row mapper must return a table') end

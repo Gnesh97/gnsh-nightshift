@@ -99,8 +99,15 @@ function Repository.new(options)
         columns = columns,
         mapper = function(row)
             local booking, bookingError = Domain.fromRow(row)
-            if not booking then return Result.err(Codes.MAPPING_FAILED, 'booking row is invalid', { cause = bookingError and bookingError.error and bookingError.error.code }) end
-            return booking
+            if booking then return booking end
+
+            local source = bookingError and bookingError.error or bookingError
+            local details = source and source.details
+            return Result.err(Codes.MAPPING_FAILED, 'booking row is invalid', {
+                cause = source and source.code or nil,
+                causeMessage = source and source.message or nil,
+                causeDetails = type(details) == 'table' and details or nil
+            })
         end
     })
     if not base then return nil, err end
