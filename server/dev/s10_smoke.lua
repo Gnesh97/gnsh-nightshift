@@ -1,26 +1,42 @@
 NightShift = NightShift or {}
 
--- Development-only runtime smoke commands. They are not registered unless the
--- server owner explicitly opts in with nightshift_s10_smoke_commands=true.
+-- Development-only runtime smoke commands. They register automatically for
+-- the development environment; other environments must explicitly opt in with
+-- nightshift_s10_smoke_commands=true.
 local getConvar = rawget(_G, 'GetConvar')
 local registerCommand = rawget(_G, 'RegisterCommand')
 if type(registerCommand) ~= 'function' then return end
 
-local enabled = false
+local function stageResult(name)
+    local server = NightShift.Server
+    local instance = type(server) == 'table' and server.instance or nil
+    local results = type(instance) == 'table' and instance.results or nil
+    return type(results) == 'table' and results[name] or nil
+end
+
+local function runtimeEnvironment()
+    local stage = stageResult('config')
+    local config = type(stage) == 'table' and (stage.config or stage.value and stage.value.config) or nil
+    if type(config) ~= 'table' then config = NightShift.DefaultConfig end
+    return type(config) == 'table' and type(config.environment) == 'string' and config.environment:lower() or nil
+end
+
+local enabled = runtimeEnvironment() == 'development'
 if type(getConvar) == 'function' then
-    local ok, value = pcall(getConvar, 'nightshift_s10_smoke_commands', 'false')
+    local ok, value = pcall(getConvar, 'nightshift_s10_smoke_commands', '')
     if ok then
         value = tostring(value):lower()
-        enabled = value == 'true' or value == '1'
+        if value == 'true' or value == '1' then
+            enabled = true
+        elseif value == 'false' or value == '0' then
+            enabled = false
+        end
     end
 end
 if not enabled then return end
 
 local function services()
-    local server = NightShift.Server
-    local instance = type(server) == 'table' and server.instance or nil
-    local results = type(instance) == 'table' and instance.results or nil
-    local stage = type(results) == 'table' and results.services or nil
+    local stage = stageResult('services')
     if type(stage) ~= 'table' then return nil end
     return stage.services or stage.value and stage.value.services or stage
 end

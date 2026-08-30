@@ -36,8 +36,9 @@ profiles do not imply a world entity or client-owned coordinates.
 
 ## Runtime Gate
 
-The development config now enables `features.demand` for a controlled smoke.
-Enable the development-only command surface before restarting the resource:
+The development config now enables `features.demand` and automatically enables
+the development-only command surface for a controlled smoke. Non-development
+environments can explicitly opt in before restarting the resource:
 
 ```text
 setr nightshift_s10_smoke_commands true

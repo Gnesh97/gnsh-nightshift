@@ -12,7 +12,7 @@ All notable changes to NightShift are documented here.
 - **NS-103:** Added server-owned AVAILABLE/BUSY/OFFLINE worker availability with optional framework duty checks, booking locks, idempotent transitions, profile persistence hook, and logout reset handling.
 - Added S10 shared enums/error/schema validation, bootstrap/manifest wiring, client candidate sanitization, and regression coverage for no-worker, oversupply, Friday high-demand, duty, cooldown, capacity, claim, and privacy boundaries. No database migration is required.
 - Local S10/full Lua contracts, parser checks, and `git diff --check` pass. The development config now enables demand for the controlled FiveM worker opt-in/customer candidate smoke; S11 negotiation is intentionally not started.
-- Added opt-in development-only FiveM smoke commands gated by `nightshift_s10_smoke_commands=true`: `/nightshift_s10_available`, `/nightshift_s10_customer`, and `/nightshift_s10_offline`. Commands require an in-game player source and print only bounded result fields to the server log.
+- Added development-only FiveM smoke commands: `/nightshift_s10_available`, `/nightshift_s10_customer`, and `/nightshift_s10_offline`. They enable automatically for the development environment; non-development environments require `nightshift_s10_smoke_commands=true`. Commands require an in-game player source and print only bounded result fields to the server log.
 
 ### S09 — NPC Travel, Streaming & Entity Control
 
