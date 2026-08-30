@@ -15,6 +15,7 @@ All notable changes to NightShift are documented here.
 - Added development-only FiveM smoke commands: `/nightshift_s10_available`, `/nightshift_s10_customer`, and `/nightshift_s10_offline`. They enable automatically for the development environment; non-development environments require `nightshift_s10_smoke_commands=true`. Commands require an in-game player source and print only bounded result fields to the server log.
 
 - Added bootstrap filesystem fallback and duplicate-load guard so a resource restart picks up the smoke module even when FXServer cached the manifest before the module was created.
+- Fixed smoke command registration to resolve FiveM natives through direct global lookup (with an embedded-host fallback); the previous raw `_G` lookup could silently skip every command in a live FXServer.
 
 ### S09 — NPC Travel, Streaming & Entity Control
 

@@ -835,8 +835,10 @@ end
 -- file. Load it from the resource filesystem as a fallback too: a running
 -- FXServer may have cached the manifest before a newly added development file
 -- existed, and a resource restart alone does not always refresh that file list.
-local loadResourceFile = rawget(_G, 'LoadResourceFile')
-local getCurrentResourceName = rawget(_G, 'GetCurrentResourceName')
+-- FiveM natives are exposed through the script global lookup, not reliably as
+-- raw entries in _G. Keep the raw fallback for isolated test/embedded hosts.
+local loadResourceFile = type(LoadResourceFile) == 'function' and LoadResourceFile or rawget(_G, 'LoadResourceFile')
+local getCurrentResourceName = type(GetCurrentResourceName) == 'function' and GetCurrentResourceName or rawget(_G, 'GetCurrentResourceName')
 if type(loadResourceFile) == 'function' and type(getCurrentResourceName) == 'function' then
     local resourceName = getCurrentResourceName()
     local source = loadResourceFile(resourceName, 'server/dev/s10_smoke.lua')

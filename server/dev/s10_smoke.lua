@@ -3,9 +3,16 @@ NightShift = NightShift or {}
 -- Development-only runtime smoke commands. They register automatically for
 -- the development environment; other environments must explicitly opt in with
 -- nightshift_s10_smoke_commands=true.
-local getConvar = rawget(_G, 'GetConvar')
-local registerCommand = rawget(_G, 'RegisterCommand')
-if type(registerCommand) ~= 'function' then return end
+-- FiveM natives are exposed through the script global lookup, not reliably as
+-- raw entries in _G. Keep the raw fallback for isolated test/embedded hosts.
+local getConvar = type(GetConvar) == 'function' and GetConvar or rawget(_G, 'GetConvar')
+local registerCommand = type(RegisterCommand) == 'function' and RegisterCommand or rawget(_G, 'RegisterCommand')
+if type(registerCommand) ~= 'function' then
+    if type(print) == 'function' then
+        print('[gnsh-nightshift] S10 smoke commands unavailable: RegisterCommand native is not exposed')
+    end
+    return
+end
 local server = NightShift.Server
 if type(server) == 'table' and server._s10SmokeCommandsLoaded == true then return end
 
