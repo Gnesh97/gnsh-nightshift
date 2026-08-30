@@ -37,10 +37,20 @@ profiles do not imply a world entity or client-owned coordinates.
 ## Runtime Gate
 
 The development config now enables `features.demand` for a controlled smoke.
-Restart the resource, opt a worker into availability, and verify one logical
-customer candidate plus cooldown/capacity behavior. Persistence remains
-independently controlled by its existing convar. S11 negotiation is not part
-of this sprint.
+Enable the development-only command surface before restarting the resource:
+
+```text
+setr nightshift_s10_smoke_commands true
+restart gnsh-nightshift
+```
+
+From an in-game player, run `/nightshift_s10_available [district]`, then
+`/nightshift_s10_customer [district] [zone]`. Verify the server log reports
+successful availability and one logical customer candidate; repeat the
+customer command to verify cooldown/capacity rejection. Run
+`/nightshift_s10_offline` after the smoke. Commands are not registered unless
+the convar is explicitly enabled. Persistence remains independently
+controlled by its existing convar. S11 negotiation is not part of this sprint.
 
 ## Exit Gate
 

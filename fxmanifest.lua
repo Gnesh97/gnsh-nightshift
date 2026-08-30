@@ -96,7 +96,8 @@ server_scripts {
     'server/repositories/payment_repository.lua',
     'server/services/settlement_service.lua',
     'server/services/refund_service.lua',
-    'server/bootstrap.lua'
+    'server/bootstrap.lua',
+    'server/dev/s10_smoke.lua'
 }
 client_scripts {
     'client/bootstrap.lua',
