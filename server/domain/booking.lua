@@ -75,7 +75,14 @@ end
 -- boundary so the domain and PriceQuote always see the canonical UTC shape.
 local function normalizeRowTimestamp(value)
     if value == nil or value == false then return nil end
-    if type(value) == 'number' then return integer(value, 0) end
+    if type(value) == 'number' then
+        value = integer(value, 0)
+        if not value then return nil end
+        if value >= 100000000000 then value = math.floor(value / 1000) end
+        local ok, output = pcall(os.date, '!%Y-%m-%dT%H:%M:%SZ', value)
+        if not ok or type(output) ~= 'string' or output:match('^%d%d%d%d%-%d%d%-%d%dT%d%d:%d%d:%d%dZ$') == nil then return nil end
+        return output
+    end
     if type(value) ~= 'string' then return nil end
     if value:match('^0000%-00%-00') then return nil end
 

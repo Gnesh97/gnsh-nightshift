@@ -78,6 +78,10 @@ do
     local databaseRoundTrip = assert(Booking.fromRow(databaseRow))
     check(databaseRoundTrip.quote.quotedAt == '2026-08-29T12:00:00Z' and databaseRoundTrip.quote.expiresAt == nil, 'database DATETIME rows must normalize to UTC timestamps and ignore zero-date expiry values')
     check(databaseRoundTrip.createdAt == '2026-08-29T11:59:00Z', 'database managed timestamps must normalize to the domain timestamp shape')
+    databaseRow.quoted_at = 1700000000000
+    local millisecondRoundTrip = assert(Booking.fromRow(databaseRow))
+    check(millisecondRoundTrip.quote.quotedAt == '2023-11-14T22:13:20Z', 'millisecond database timestamps must normalize to UTC seconds')
+    databaseRow.quoted_at = '2026-08-29 12:00:00.000'
     databaseRow.quote_expires_at = '0000-00-00 00:00:00.000'
     local zeroDateRoundTrip = assert(Booking.fromRow(databaseRow))
     check(zeroDateRoundTrip.quote.expiresAt == nil, 'zero-date DATETIME strings must be treated as absent nullable timestamps')
