@@ -16,6 +16,7 @@ All notable changes to NightShift are documented here.
 
 - Added bootstrap filesystem fallback and duplicate-load guard so a resource restart picks up the smoke module even when FXServer cached the manifest before the module was created.
 - Fixed smoke command registration to resolve FiveM natives through direct global lookup (with an embedded-host fallback); the previous raw `_G` lookup could silently skip every command in a live FXServer.
+- Completed the live S10 FiveM smoke gate: availability, customer generation, cooldown rejection, offline transition, and offline customer denial all matched the expected server-authoritative results.
 
 ### S09 — NPC Travel, Streaming & Entity Control
 

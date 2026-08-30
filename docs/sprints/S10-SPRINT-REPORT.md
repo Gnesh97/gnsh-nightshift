@@ -56,6 +56,13 @@ customer command to verify cooldown/capacity rejection. Run
 the convar is explicitly enabled. Persistence remains independently
 controlled by its existing convar. S11 negotiation is not part of this sprint.
 
+Live FiveM smoke completed on the connected player (`source=1`): availability
+for `vinewood` returned `AVAILABLE`; customer generation for
+`vinewood_hills` returned one logical opportunity (`score=65`, `band=NORMAL`);
+an immediate repeat returned `NPC_CUSTOMER_COOLDOWN`; and the offline transition
+returned `OFFLINE`. Customer generation while offline returned the expected
+`WORKER_AVAILABILITY_DENIED`.
+
 ## Exit Gate
 
 - District profiles: PASS
@@ -63,4 +70,4 @@ controlled by its existing convar. S11 negotiation is not part of this sprint.
 - Customer generator: PASS
 - Player worker availability: PASS
 
-**S10 Exit Gate: PASS — STOP.**
+**S10 Exit Gate: PASS — local contracts and live FiveM smoke complete. STOP.**
