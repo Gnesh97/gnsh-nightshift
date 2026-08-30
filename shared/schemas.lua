@@ -37,6 +37,22 @@ NightShift.Schemas = {
         entity = 'entity_handle', networkId = 'entity_handle',
         owner = 'player_source', state = 'enum'
     },
-    demand = { min = 'bounded_number', max = 'bounded_number', window = 'positive_number' },
+    district = {
+        id = 'string', baselineDemand = 'bounded_number', priceModifier = 'bounded_number',
+        riskModifier = 'bounded_number', heatModifier = 'bounded_number',
+        allowedZones = 'string_array', timeCurve = 'number_map', dayCurve = 'number_map',
+        maxActiveCustomers = 'bounded_integer', available = 'boolean'
+    },
+    demand = {
+        min = 'bounded_number', max = 'bounded_number', window = 'positive_number',
+        generationIntervalSeconds = 'positive_integer', candidateCooldownSeconds = 'bounded_integer',
+        opportunityTtlSeconds = 'positive_integer', maxConcurrentOpportunities = 'positive_integer',
+        maxActiveLogicalCustomers = 'positive_integer', districts = 'district_map'
+    },
+    workerAvailability = { state = 'enum', available = 'boolean', bookingId = 'string' },
+    customerOpportunity = {
+        opportunityKey = 'string', district = 'string', zone = 'string', state = 'enum',
+        demandScore = 'bounded_number', demandBand = 'enum', createdAt = 'number', expiresAt = 'number'
+    },
     heat = { min = 'bounded_number', max = 'bounded_number', decay = 'bounded_number' }
 }

@@ -308,6 +308,217 @@ local function validateCancellation(raw)
     return output
 end
 
+local districtDays = {
+    MONDAY = 1, TUESDAY = 2, WEDNESDAY = 3, THURSDAY = 4,
+    FRIDAY = 5, SATURDAY = 6, SUNDAY = 7
+}
+
+local function districtToken(value)
+    return type(value) == 'string' and #value <= 64 and value:match('^[A-Za-z][A-Za-z0-9_.:%-]*$') ~= nil
+end
+
+local function normalizeDemandCurve(raw, path, kind)
+    if raw == nil then return {} end
+    if type(raw) ~= 'table' then return fail('INVALID_CONFIG', path, 'demand curve must be a table') end
+    local output = {}
+    local array24 = kind == 'time' and #raw == 24
+    for key, value in pairs(raw) do
+        local normalizedKey
+        if kind == 'time' then
+            normalizedKey = tonumber(key)
+            if array24 then normalizedKey = tonumber(key) - 1 end
+            if not normalizedKey or normalizedKey ~= math.floor(normalizedKey) or normalizedKey < 0 or normalizedKey > 23 then
+                return fail('INVALID_CONFIG', path .. '.' .. tostring(key), 'time curve hour must be an integer from 0 to 23')
+            end
+        else
+            if type(key) == 'number' then
+                normalizedKey = key
+            elseif type(key) == 'string' then
+                normalizedKey = districtDays[key:upper()]
+            end
+            if not normalizedKey or normalizedKey ~= math.floor(normalizedKey) or normalizedKey < 1 or normalizedKey > 7 then
+                return fail('INVALID_CONFIG', path .. '.' .. tostring(key), 'day curve key must be a weekday or integer from 1 to 7')
+            end
+        end
+        if not finite(value) or value < 0 or value > 5 then
+            return fail('INVALID_CONFIG', path .. '.' .. tostring(key), 'demand curve multiplier is outside safe bounds')
+        end
+        if output[normalizedKey] ~= nil then
+            return fail('INVALID_CONFIG', path .. '.' .. tostring(key), 'demand curve contains duplicate keys')
+        end
+        output[normalizedKey] = value
+    end
+    return output
+end
+
+local function normalizeDemandZones(raw, path)
+    if raw == nil then return {} end
+    local ok, arrayError = array(raw, path, 'demand discovery zones')
+    if not ok then return nil, arrayError end
+    local output, seen = {}, {}
+    for index, value in ipairs(raw) do
+        value = type(value) == 'string' and value:lower() or nil
+        if not districtToken(value) or seen[value] then
+            return fail('INVALID_CONFIG', path .. '[' .. index .. ']', 'demand discovery zone is invalid or duplicated')
+        end
+        seen[value] = true
+        output[index] = value
+    end
+    return output
+end
+
+local function normalizeDemandDistricts(raw, path)
+    if raw == nil then raw = {} end
+    if type(raw) ~= 'table' then return fail('INVALID_CONFIG', path, 'demand districts must be a table') end
+    local output, seen = {}, {}
+    local allowed = {
+        id = true, districtId = true, district_id = true, key = true,
+        baseline = true, baselineDemand = true, baseline_demand = true, demandBaseline = true,
+        priceModifier = true, price_modifier = true, riskModifier = true, risk_modifier = true,
+        heatModifier = true, heat_modifier = true, allowedZones = true,
+        allowedStreetZones = true, allowed_street_zones = true,
+        streetDiscoveryZones = true, street_discovery_zones = true,
+        timeCurve = true, time_curve = true, timeDemand = true, time_demand = true,
+        dayCurve = true, day_curve = true, dayDemand = true, day_demand = true,
+        maxActiveCustomers = true, max_active_customers = true,
+        maxActiveLogicalCustomers = true, max_active_logical_customers = true,
+        available = true, version = true
+    }
+    local function add(rawValue, fallbackId, index)
+        if type(rawValue) ~= 'table' then return fail('INVALID_CONFIG', path .. '[' .. tostring(index) .. ']', 'district profile must be a table') end
+        for key in pairs(rawValue) do
+            if not allowed[key] then return fail('INVALID_CONFIG', path .. '[' .. tostring(index) .. '].' .. tostring(key), 'district field is not allowlisted') end
+        end
+        local id = rawValue.id or rawValue.districtId or rawValue.district_id or rawValue.key or fallbackId
+        id = type(id) == 'string' and id:lower() or nil
+        if not districtToken(id) then return fail('INVALID_CONFIG', path .. '[' .. tostring(index) .. '].id', 'district ID is invalid') end
+        if seen[id] then return fail('DUPLICATE_ID', path .. '[' .. tostring(index) .. '].id', 'duplicate district ID') end
+        seen[id] = true
+        local baseline = rawValue.baselineDemand
+        if baseline == nil then baseline = rawValue.baseline end
+        if baseline == nil then baseline = rawValue.baseline_demand end
+        if baseline == nil then baseline = rawValue.demandBaseline end
+        baseline = baseline == nil and 50 or baseline
+        if not finite(baseline) or baseline < 0 or baseline > 100 then return fail('INVALID_CONFIG', path .. '[' .. tostring(index) .. '].baseline', 'district baseline must be between zero and one hundred') end
+        local price = rawValue.priceModifier or rawValue.price_modifier
+        price = price == nil and 1 or price
+        if not finite(price) or price <= 0 or price > 10 then return fail('INVALID_CONFIG', path .. '[' .. tostring(index) .. '].priceModifier', 'district price modifier is outside safe bounds') end
+        local risk = rawValue.riskModifier or rawValue.risk_modifier
+        risk = risk == nil and 0 or risk
+        if not finite(risk) or risk < 0 or risk > 100 then return fail('INVALID_CONFIG', path .. '[' .. tostring(index) .. '].riskModifier', 'district risk modifier is outside safe bounds') end
+        local heat = rawValue.heatModifier or rawValue.heat_modifier
+        heat = heat == nil and 0 or heat
+        if not finite(heat) or heat < 0 or heat > 100 then return fail('INVALID_CONFIG', path .. '[' .. tostring(index) .. '].heatModifier', 'district heat modifier is outside safe bounds') end
+        local zones = rawValue.allowedZones or rawValue.allowedStreetZones or rawValue.allowed_street_zones
+            or rawValue.streetDiscoveryZones or rawValue.street_discovery_zones
+        local normalizedZones, zoneError = normalizeDemandZones(zones, path .. '[' .. tostring(index) .. '].allowedZones')
+        if not normalizedZones then return nil, zoneError end
+        local timeCurve, timeError = normalizeDemandCurve(rawValue.timeCurve or rawValue.time_curve or rawValue.timeDemand or rawValue.time_demand, path .. '[' .. tostring(index) .. '].timeCurve', 'time')
+        if not timeCurve then return nil, timeError end
+        local dayCurve, dayError = normalizeDemandCurve(rawValue.dayCurve or rawValue.day_curve or rawValue.dayDemand or rawValue.day_demand, path .. '[' .. tostring(index) .. '].dayCurve', 'day')
+        if not dayCurve then return nil, dayError end
+        local maximum = rawValue.maxActiveCustomers or rawValue.max_active_customers or rawValue.maxActiveLogicalCustomers or rawValue.max_active_logical_customers
+        maximum = maximum == nil and 10 or maximum
+        if not finite(maximum) or maximum < 1 or maximum > 100000 or maximum ~= math.floor(maximum) then return fail('INVALID_CONFIG', path .. '[' .. tostring(index) .. '].maxActiveCustomers', 'district active customer capacity is invalid') end
+        local available, availableError = booleanValue(rawValue.available, path .. '[' .. tostring(index) .. '].available', true)
+        if available == nil then return nil, availableError end
+        local version = rawValue.version == nil and 1 or rawValue.version
+        if not finite(version) or version < 1 or version ~= math.floor(version) then return fail('INVALID_CONFIG', path .. '[' .. tostring(index) .. '].version', 'district version is invalid') end
+        output[id] = {
+            id = id, key = id, baseline = baseline, baselineDemand = baseline,
+            priceModifier = price, riskModifier = risk, heatModifier = heat,
+            allowedZones = normalizedZones, streetDiscoveryZones = copy(normalizedZones),
+            timeCurve = timeCurve, dayCurve = dayCurve, maxActiveCustomers = maximum,
+            available = available, version = version
+        }
+        return true
+    end
+    if #raw > 0 then
+        local ok, errorResult = array(raw, path, 'demand districts')
+        if not ok then return nil, errorResult end
+        for index, value in ipairs(raw) do
+            local okValue, valueError = add(value, nil, index)
+            if not okValue then return nil, valueError end
+        end
+    else
+        for key, value in pairs(raw) do
+            local okValue, valueError = add(value, key, key)
+            if not okValue then return nil, valueError end
+        end
+    end
+    return output
+end
+
+local function validateDemandConfig(raw)
+    if raw == nil then raw = NightShift.DemandConfig or {} end
+    if type(raw) ~= 'table' then return fail('INVALID_CONFIG', 'demand', 'demand configuration must be a table') end
+    local output = copy(raw)
+    local enabled, enabledError = booleanValue(raw.enabled, 'demand.enabled', true)
+    if enabled == nil then return nil, enabledError end
+    local function boundedDemand(value, path, fallback, maximumBound)
+        value = value == nil and fallback or value
+        if not finite(value) or value < 0 or value > maximumBound then return fail('INVALID_CONFIG', path, 'value is outside safe bounds') end
+        return value
+    end
+    local minimum, minimumError = boundedDemand(raw.min, 'demand.min', 0, 100)
+    if minimum == nil then return nil, minimumError end
+    local maximum, maximumError = boundedDemand(raw.max, 'demand.max', 100, 100)
+    if maximum == nil then return nil, maximumError end
+    if maximum < minimum then return fail('INVALID_CONFIG', 'demand.max', 'demand maximum must not be below minimum') end
+    local window, windowError = boundedDemand(raw.window, 'demand.window', 60, 86400)
+    if window == nil then return nil, windowError end
+    local function integerSetting(name, fallback, upper)
+        local value = raw[name]
+        value = value == nil and fallback or value
+        if not finite(value) or value < 0 or value > upper or value ~= math.floor(value) then local _, errorResult = fail('INVALID_CONFIG', 'demand.' .. name, 'demand setting must be a bounded integer'); return nil, errorResult end
+        return value
+    end
+    local generationInterval, generationError = integerSetting('generationIntervalSeconds', 60, 86400)
+    if generationInterval == nil then return nil, generationError end
+    local cooldown, cooldownError = integerSetting('candidateCooldownSeconds', 120, 86400)
+    if cooldown == nil then return nil, cooldownError end
+    local ttl, ttlError = integerSetting('opportunityTtlSeconds', 600, 86400)
+    if ttl == nil or ttl < 1 then return nil, ttlError or fail('INVALID_CONFIG', 'demand.opportunityTtlSeconds', 'opportunity TTL must be positive') end
+    local concurrent, concurrentError = integerSetting('maxConcurrentOpportunities', 3, 1000)
+    if concurrent == nil or concurrent < 1 then return nil, concurrentError or fail('INVALID_CONFIG', 'demand.maxConcurrentOpportunities', 'maximum concurrent opportunities must be positive') end
+    local activeCustomers, activeError = integerSetting('maxActiveLogicalCustomers', 50, 100000)
+    if activeCustomers == nil or activeCustomers < 1 then return nil, activeError or fail('INVALID_CONFIG', 'demand.maxActiveLogicalCustomers', 'maximum active logical customers must be positive') end
+    local minimumScore, scoreError = boundedDemand(raw.minimumDemandScore, 'demand.minimumDemandScore', 1, 100)
+    if minimumScore == nil then return nil, scoreError end
+    local function impact(name, fallback)
+        local value = raw[name]
+        value = value == nil and fallback or value
+        if not finite(value) or value < 0 or value > 1 then local _, errorResult = fail('INVALID_CONFIG', 'demand.' .. name, 'demand impact must be between zero and one'); return nil, errorResult end
+        return value
+    end
+    local oversupply, oversupplyError = impact('oversupplyPenalty', 0.5)
+    if oversupply == nil then return nil, oversupplyError end
+    local activity, activityError = impact('recentActivityImpact', 0.15)
+    if activity == nil then return nil, activityError end
+    local police, policeError = impact('policePressureImpact', 0.2)
+    if police == nil then return nil, policeError end
+    local heat, heatError = impact('heatImpact', 0.2)
+    if heat == nil then return nil, heatError end
+    local defaultDistrict = raw.defaultDistrict
+    if defaultDistrict ~= nil then
+        defaultDistrict = type(defaultDistrict) == 'string' and defaultDistrict:lower() or nil
+        if not districtToken(defaultDistrict) then return fail('INVALID_CONFIG', 'demand.defaultDistrict', 'default district is invalid') end
+    end
+    local districtSource = raw.districts or raw.profiles
+    local districts, districtError = normalizeDemandDistricts(districtSource, 'demand.districts')
+    if not districts then return nil, districtError end
+    if defaultDistrict ~= nil and next(districts) ~= nil and not districts[defaultDistrict] then return fail('INVALID_CONFIG', 'demand.defaultDistrict', 'default district is not configured') end
+    output.enabled, output.min, output.max, output.window = enabled, minimum, maximum, window
+    output.generationIntervalSeconds, output.candidateCooldownSeconds = generationInterval, cooldown
+    output.opportunityTtlSeconds, output.maxConcurrentOpportunities = ttl, concurrent
+    output.maxActiveLogicalCustomers, output.minimumDemandScore = activeCustomers, minimumScore
+    output.oversupplyPenalty, output.recentActivityImpact = oversupply, activity
+    output.policePressureImpact, output.heatImpact = police, heat
+    output.defaultDistrict, output.districts = defaultDistrict, districts
+    output.profiles = copy(districts)
+    return output
+end
+
 function V.validateConfig(input, options)
     options=options or {}; if input==nil then input=NightShift.DefaultConfig end; if type(input)~='table' then return fail('INVALID_CONFIG','config','configuration must be a table') end
     local out=copy(input); local raw=rawget(input,'provider'); if raw==nil then raw=rawget(input,'providerSelection') end; local provider=raw==nil and {} or raw
@@ -335,6 +546,6 @@ function V.validateConfig(input, options)
     local function section(name)
         local s=rawget(input,name); if s==nil then s={} end; if type(s)~='table' then return fail('INVALID_CONFIG',name,name..' must be a table') end; local mn,e=bounded(s.min,name..'.min',0,100); if mn==nil then return nil,e end; local mx; mx,e=bounded(s.max,name..'.max',100,100); if mx==nil then return nil,e end; if mx<mn then return fail('INVALID_CONFIG',name..'.max','maximum must not be below minimum') end; local r=copy(s); r.min,r.max=mn,mx; if name=='demand' then r.window,e=bounded(s.window,name..'.window',0,86400); if r.window==nil then return nil,e end else r.decay,e=bounded(s.decay,name..'.decay',0,100); if r.decay==nil then return nil,e end end; return r
     end
-    local demand,e=section('demand'); if not demand then return nil,e end; local heat; heat,e=section('heat'); if not heat then return nil,e end; out.demand,out.heat=demand,heat; return out
+    local demand, demandError = validateDemandConfig(rawget(input, 'demand')); if not demand then return nil, demandError end; local heat; heat,demandError=section('heat'); if not heat then return nil,demandError end; out.demand,out.heat=demand,heat; return out
 end
 V.copy=copy; NightShift.Config=NightShift.Config or {validate=V.validateConfig}

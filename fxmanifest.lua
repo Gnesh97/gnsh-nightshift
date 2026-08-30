@@ -15,6 +15,7 @@ shared_scripts {
     'config/locations.lua',
     'config/npc_profiles.lua',
     'config/npc_streaming.lua',
+    'config/demand.lua',
     'config/pricing.lua',
     'config/cancellation.lua',
     'config/config.lua'
@@ -62,6 +63,7 @@ server_scripts {
     'server/repositories/location_repository.lua',
     'server/domain/location_reservation.lua',
     'server/repositories/location_reservation_repository.lua',
+    'server/domain/district.lua',
     'server/domain/npc_profile.lua',
     'server/repositories/npc_profile_repository.lua',
     'server/domain/travel_plan.lua',
@@ -75,6 +77,10 @@ server_scripts {
     'server/services/vehicle_location_service.lua',
     'server/services/npc_profile_generator.lua',
     'server/services/npc_worker_service.lua',
+    'server/services/district_service.lua',
+    'server/services/demand_service.lua',
+    'server/services/worker_availability_service.lua',
+    'server/services/npc_customer_service.lua',
     'server/services/npc_travel_service.lua',
     'server/services/npc_entity_registry.lua',
     'server/services/npc_spawn_service.lua',
@@ -100,5 +106,6 @@ client_scripts {
     'client/npc/entity_registry.lua',
     'client/npc/spawn.lua',
     'client/npc/navigation.lua',
-    'client/npc/despawn.lua'
+    'client/npc/despawn.lua',
+    'client/worker_mode/customer_candidates.lua'
 }

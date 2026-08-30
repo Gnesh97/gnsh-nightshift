@@ -4,6 +4,15 @@ All notable changes to NightShift are documented here.
 
 ## [Unreleased]
 
+### S10 — Worker Mode Demand & Customer Generation
+
+- **NS-100:** Added configuration-driven district profiles with time/day demand curves, price and risk/heat placeholders, allowlisted discovery-zone labels, availability, and bounded logical-customer capacity; no map coordinates are embedded in district behavior.
+- **NS-101:** Added a server-authoritative, explainable demand engine using district baselines, time/day curves, active-worker supply, recent-activity/police/heat hooks, optional event/weather modifiers, oversupply adjustment, and safe score clamping.
+- **NS-102:** Added bounded NPC customer opportunity generation for explicitly AVAILABLE workers, district/zone eligibility, generation cooldowns, logical CUSTOMER profiles, claim/dismiss/expiry lifecycle, and per-worker/global capacity limits. Client candidates remain minimal logical DTOs; physical mapping is opt-in and on demand.
+- **NS-103:** Added server-owned AVAILABLE/BUSY/OFFLINE worker availability with optional framework duty checks, booking locks, idempotent transitions, profile persistence hook, and logout reset handling.
+- Added S10 shared enums/error/schema validation, bootstrap/manifest wiring, client candidate sanitization, and regression coverage for no-worker, oversupply, Friday high-demand, duty, cooldown, capacity, claim, and privacy boundaries. No database migration is required.
+- Local S10/full Lua contracts, parser checks, and `git diff --check` pass. Live worker opt-in/customer candidate smoke remains the next FiveM runtime gate; S11 negotiation is intentionally not started.
+
 ### S09 — NPC Travel, Streaming & Entity Control
 
 - **NS-090:** Added immutable, server-owned logical travel plans with typed endpoints, deterministic ETA, monotonic progress, spawn thresholds, explicit recovery states, arrival, and return transitions; travel does not require a physical ped.

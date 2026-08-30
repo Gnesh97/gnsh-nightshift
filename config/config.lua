@@ -16,6 +16,6 @@ NightShift.DefaultConfig = {
     serviceCatalog = NightShift.ServiceCatalogConfig,
     pricing = NightShift.PricingConfig,
     cancellation = NightShift.CancellationConfig,
-    demand = { min = 0, max = 100 },
+    demand = NightShift.DemandConfig,
     heat = { min = 0, max = 100 }
 }

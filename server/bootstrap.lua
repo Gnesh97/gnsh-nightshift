@@ -293,6 +293,42 @@ local defaultStages = {
         if type(context) == 'table' then framework = rawget(context, 'frameworkAdapter') or framework end
         if type(context) == 'table' then money = rawget(context, 'moneyAdapter') or rawget(context, 'money') or money end
         local databaseDeferred = repositoryResult.deferred == true
+        local demandConfig = config.demand or config.demandConfig or NightShift.DemandConfig or {}
+        local districtService = options.districtService or options.districts
+        if districtService == nil and NightShift.DistrictService then
+            local created, err = NightShift.DistrictService.new({ config = demandConfig, clock = options.clock })
+            if not created then return err end
+            districtService = created
+        end
+        local workerAvailability = options.workerAvailabilityService or options.workerAvailability
+        if workerAvailability == nil and NightShift.WorkerAvailabilityService then
+            local created, err = NightShift.WorkerAvailabilityService.new({
+                framework = framework,
+                clock = options.clock,
+                requireDuty = options.workerRequireDuty == true,
+                persistProfile = options.workerAvailabilityPersist == true
+            })
+            if not created then return err end
+            workerAvailability = created
+        end
+        local demandService = options.demandService or options.demand
+        if demandService == nil and NightShift.DemandService and districtService then
+            local created, err = NightShift.DemandService.new({
+                districtService = districtService,
+                availabilityService = workerAvailability,
+                config = demandConfig,
+                enabled = features.demand == true,
+                clock = options.clock,
+                activeWorkersResolver = options.activeWorkersResolver,
+                recentActivityResolver = options.recentActivityResolver,
+                policePressureResolver = options.policePressureResolver,
+                heatResolver = options.heatResolver,
+                eventResolver = options.demandEventResolver,
+                weatherResolver = options.demandWeatherResolver
+            })
+            if not created then return err end
+            demandService = created
+        end
         local vehicleLocation = options.vehicleLocationService
         if vehicleLocation == nil and NightShift.VehicleLocationService and type(options.getVehicle) == 'function' then
             local created, err = NightShift.VehicleLocationService.new({
@@ -432,11 +468,28 @@ local defaultStages = {
             if not created then return err end
             npcArrival = created
         end
+        local npcCustomer = options.npcCustomerService or options.npcCustomer
+        if npcCustomer == nil and NightShift.NpcCustomerService and districtService and demandService and workerAvailability and npcProfileGenerator then
+            local created, err = NightShift.NpcCustomerService.new({
+                districtService = districtService,
+                demandService = demandService,
+                availabilityService = workerAvailability,
+                generator = npcProfileGenerator,
+                config = demandConfig,
+                enabled = features.demand == true,
+                clock = options.clock,
+                districtResolver = options.workerDistrictResolver,
+                zoneResolver = options.discoveryZoneResolver
+            })
+            if not created then return err end
+            npcCustomer = created
+        end
         if framework == nil or databaseDeferred then
             return { ok = true, deferred = true, reason = framework == nil and 'framework adapter not configured' or 'profile repositories deferred', services = {
                 location = locationService, locationReservation = locationReservation, vehicleLocation = vehicleLocation,
                 npcProfileGenerator = npcProfileGenerator, npcWorker = npcWorker, marketplace = marketplace,
-                npcTravel = npcTravel, npcEntityRegistry = npcEntityRegistry, npcSpawn = npcSpawn, npcArrival = npcArrival
+                npcTravel = npcTravel, npcEntityRegistry = npcEntityRegistry, npcSpawn = npcSpawn, npcArrival = npcArrival,
+                district = districtService, demand = demandService, workerAvailability = workerAvailability, npcCustomer = npcCustomer
             } }
         end
         local catalog = options.serviceCatalog
@@ -471,11 +524,24 @@ local defaultStages = {
             if not created then return err end
             identity = created
         end
+        if workerAvailability then
+            if workerAvailability._identity == nil then workerAvailability._identity = identity end
+            if workerAvailability._profile == nil then workerAvailability._profile = options.workerProfileService end
+            if framework and type(framework.onPlayerUnloaded) == 'function' then
+                pcall(framework.onPlayerUnloaded, framework, function(value)
+                    local source = type(value) == 'table' and value.source or value
+                    if source ~= nil then workerAvailability:reset(source, 'logout') end
+                end)
+            end
+        end
         local worker = options.workerProfileService
         if worker == nil and NightShift.WorkerProfileService and repositories.workerProfile and identity then
             local created, err = NightShift.WorkerProfileService.new({ identityService = identity, repository = repositories.workerProfile })
             if not created then return err end
             worker = created
+        end
+        if workerAvailability and workerAvailability._profile == nil and worker then
+            workerAvailability._profile = worker
         end
         local client = options.clientProfileService
         if client == nil and NightShift.ClientProfileService and repositories.clientProfile and identity then
@@ -499,7 +565,8 @@ local defaultStages = {
             return { ok = true, deferred = true, reason = 'identity/profile services unavailable', services = {
                 location = locationService, locationReservation = locationReservation, vehicleLocation = vehicleLocation,
                 npcProfileGenerator = npcProfileGenerator, npcWorker = npcWorker, marketplace = marketplace,
-                npcTravel = npcTravel, npcEntityRegistry = npcEntityRegistry, npcSpawn = npcSpawn, npcArrival = npcArrival
+                npcTravel = npcTravel, npcEntityRegistry = npcEntityRegistry, npcSpawn = npcSpawn, npcArrival = npcArrival,
+                district = districtService, demand = demandService, workerAvailability = workerAvailability, npcCustomer = npcCustomer
             } }
         end
         local bookingTimeline = options.bookingTimelineService
@@ -546,7 +613,8 @@ local defaultStages = {
             return { ok = true, deferred = true, reason = 'booking services unavailable', services = {
                 location = locationService, locationReservation = locationReservation, vehicleLocation = vehicleLocation,
                 npcProfileGenerator = npcProfileGenerator, npcWorker = npcWorker, marketplace = marketplace,
-                npcTravel = npcTravel, npcEntityRegistry = npcEntityRegistry, npcSpawn = npcSpawn, npcArrival = npcArrival
+                npcTravel = npcTravel, npcEntityRegistry = npcEntityRegistry, npcSpawn = npcSpawn, npcArrival = npcArrival,
+                district = districtService, demand = demandService, workerAvailability = workerAvailability, npcCustomer = npcCustomer
             } }
         end
         if npcArrival and npcArrival._booking == nil then npcArrival._booking = booking end
@@ -572,7 +640,11 @@ local defaultStages = {
             npcTravel = npcTravel,
             npcEntityRegistry = npcEntityRegistry,
             npcSpawn = npcSpawn,
-            npcArrival = npcArrival
+            npcArrival = npcArrival,
+            district = districtService,
+            demand = demandService,
+            workerAvailability = workerAvailability,
+            npcCustomer = npcCustomer
         } }
     end
 }

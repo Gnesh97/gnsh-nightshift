@@ -87,6 +87,18 @@ NightShift.Enums.NpcEntityStates = NightShift.Enums.NpcEntityStates or {
     DESPAWNED = true
 }
 
+NightShift.Enums.WorkerAvailabilityStates = NightShift.Enums.WorkerAvailabilityStates or {
+    AVAILABLE = true,
+    BUSY = true,
+    OFFLINE = true
+}
+
+NightShift.Enums.DemandBands = NightShift.Enums.DemandBands or {
+    LOW = true,
+    NORMAL = true,
+    HIGH = true
+}
+
 NightShift.Enums.NpcPriceClasses = NightShift.Enums.NpcPriceClasses or {
     [1] = true,
     [2] = true,
