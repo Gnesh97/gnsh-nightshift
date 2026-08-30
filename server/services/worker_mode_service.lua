@@ -56,6 +56,15 @@ local function sourceValue(value)
     return integer(value, 1, 65535)
 end
 
+local function sameNegotiatedQuote(existing, expected)
+    if type(existing) ~= 'table' or type(expected) ~= 'table' then return false end
+    local existingCurrency = type(existing.currency) == 'string' and existing.currency:upper() or existing.currency
+    local expectedCurrency = type(expected.currency) == 'string' and expected.currency:upper() or expected.currency
+    return tonumber(existing.amountMinor) == tonumber(expected.amountMinor)
+        and existingCurrency == expectedCurrency
+        and tostring(existing.quoteId or '') == tostring(expected.quoteId or '')
+end
+
 local function actorInput(value)
     if type(value) == 'table' then
         local source = sourceValue(value.source)
@@ -241,20 +250,41 @@ function Service:_materialize(context, negotiation)
         amountMinor = acceptedPrice.amountMinor, currency = acceptedPrice.currency,
         quotedAt = acceptedPrice.acceptedAt, expiresAt = negotiation.expiresAt
     }
-    local authoritative = self._booking.applyAuthoritativeQuote or self._booking.applyServerQuote
-    if type(authoritative) ~= 'function' then
-        self:_cleanupBooking(actor, booking, 'worker-mode-authoritative-quote-unavailable')
-        return Result.err(Codes.WORKER_MODE_INVALID, 'booking service does not support authoritative negotiation quotes')
+    local resumable = { DRAFT = true, QUOTED = true, OFFERED = true, ACCEPTED = true }
+    local alreadyMaterialized = { RESERVED = true, TRAVELLING = true, ARRIVED = true, ACTIVE = true, COMPLETED = true, SETTLED = true }
+    if alreadyMaterialized[booking.status] then
+        context.bookingId = booking.id
+        self._contexts[negotiation.id] = context
+        return Result.ok({ negotiation = negotiation, booking = booking, opportunity = context.opportunity }, { idempotent = true })
     end
-    local quotedResult = authoritative(self._booking, actor, booking.id, quote, booking.version)
-    booking, bookingError = unwrap(quotedResult, Codes.WORKER_MODE_INVALID)
-    if not booking then return bookingError end
-    local offeredResult = self._booking:offer(actor, booking.id, booking.version)
-    booking, bookingError = unwrap(offeredResult, Codes.WORKER_MODE_INVALID)
-    if not booking then return bookingError end
-    local acceptedResult = self._booking:accept(actor, booking.id, booking.version)
-    booking, bookingError = unwrap(acceptedResult, Codes.WORKER_MODE_INVALID)
-    if not booking then return bookingError end
+    if not resumable[booking.status] then
+        return Result.err(Codes.WORKER_MODE_CONFLICT, 'worker mode booking cannot resume from its current state', { status = booking.status })
+    end
+    if booking.status ~= 'DRAFT' and not sameNegotiatedQuote(booking.quote, quote) then
+        return Result.err(Codes.WORKER_MODE_CONFLICT, 'worker mode booking quote does not match the accepted negotiation')
+    end
+    local shouldOffer = booking.status == 'DRAFT' or booking.status == 'QUOTED'
+    local shouldAccept = shouldOffer or booking.status == 'OFFERED'
+    if booking.status == 'DRAFT' then
+        local authoritative = self._booking.applyAuthoritativeQuote or self._booking.applyServerQuote
+        if type(authoritative) ~= 'function' then
+            self:_cleanupBooking(actor, booking, 'worker-mode-authoritative-quote-unavailable')
+            return Result.err(Codes.WORKER_MODE_INVALID, 'booking service does not support authoritative negotiation quotes')
+        end
+        local quotedResult = authoritative(self._booking, actor, booking.id, quote, booking.version)
+        booking, bookingError = unwrap(quotedResult, Codes.WORKER_MODE_INVALID)
+        if not booking then return bookingError end
+    end
+    if shouldOffer then
+        local offeredResult = self._booking:offer(actor, booking.id, booking.version)
+        booking, bookingError = unwrap(offeredResult, Codes.WORKER_MODE_INVALID)
+        if not booking then return bookingError end
+    end
+    if shouldAccept then
+        local acceptedResult = self._booking:accept(actor, booking.id, booking.version)
+        booking, bookingError = unwrap(acceptedResult, Codes.WORKER_MODE_INVALID)
+        if not booking then return bookingError end
+    end
     local lockedResult = self._availability:lockForBooking(actor.source, booking.id)
     local locked, lockError = unwrap(lockedResult, Codes.WORKER_MODE_UNAVAILABLE)
     if not locked then
@@ -307,6 +337,13 @@ function Service:accept(actorInputValue, negotiationId, expected)
     local context = self._contexts[tostring(negotiationId)]
     if not context then return Result.err(Codes.WORKER_MODE_NOT_FOUND, 'worker mode negotiation context was not found') end
     if context.actor.ref ~= actor.ref or context.actor.source ~= actor.source then return Result.err(Codes.WORKER_MODE_CONFLICT, 'worker mode negotiation belongs to another worker') end
+    if type(self._negotiation.get) == 'function' then
+        local currentResult = self._negotiation:get(negotiationId)
+        local current = type(currentResult) == 'table' and currentResult.ok and currentResult.value or nil
+        if type(current) == 'table' and current.status == 'ACCEPTED' then
+            return self:_materialize(context, current)
+        end
+    end
     local result = self._negotiation:accept(actor, negotiationId, expected)
     local negotiation, errorResult = unwrap(result, Codes.WORKER_MODE_INVALID)
     if not negotiation then return errorResult end

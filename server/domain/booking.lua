@@ -70,6 +70,22 @@ local function normalizeTimestamp(value, field)
     return value
 end
 
+-- MariaDB DATETIME values arrive without a timezone and zero dates may be
+-- exposed by oxmysql as false/invalid Date values. Normalize only the row
+-- boundary so the domain and PriceQuote always see the canonical UTC shape.
+local function normalizeRowTimestamp(value)
+    if value == nil or value == false then return nil end
+    if type(value) == 'number' then return value end
+    if type(value) ~= 'string' then return nil end
+    if value:match('^0000%-00%-00') then return nil end
+
+    local date, clock, remainder = value:match('^(%d%d%d%d%-%d%d%-%d%d)[ T](%d%d:%d%d:%d%d)(.*)$')
+    if date and (remainder == '' or remainder == 'Z' or remainder:match('^%.%d+$') or remainder:match('^%.%d+Z$')) then
+        return date .. 'T' .. clock .. 'Z'
+    end
+    return value
+end
+
 local function normalizeCurrency(value, field)
     value = type(value) == 'string' and value:upper() or value
     if type(value) ~= 'string' or value:match('^[A-Z][A-Z][A-Z]$') == nil then
@@ -317,6 +333,15 @@ function Booking.fromRow(row)
     if clientRef ~= nil then clientRef = tostring(clientRef) end
     if workerRef ~= nil then workerRef = tostring(workerRef) end
     if locationRef ~= nil then locationRef = tostring(locationRef) end
+    local quotedAt = normalizeRowTimestamp(row.quoted_at)
+    local agreedAt = normalizeRowTimestamp(row.agreed_at)
+    local quoteExpiresAt = normalizeRowTimestamp(row.quote_expires_at)
+    local scheduledAt = normalizeRowTimestamp(row.scheduled_at or row.scheduledAt)
+    local startAt = normalizeRowTimestamp(row.started_at or row.start_at or row.startAt)
+    local endAt = normalizeRowTimestamp(row.ended_at or row.end_at or row.endAt)
+    local completedAt = normalizeRowTimestamp(row.completed_at or row.completedAt)
+    local createdAt = normalizeRowTimestamp(row.created_at or row.createdAt)
+    local updatedAt = normalizeRowTimestamp(row.updated_at or row.updatedAt)
     local values = {
         id = row.id,
         idempotencyKey = row.idempotency_key or row.idempotencyKey,
@@ -329,18 +354,18 @@ function Booking.fromRow(row)
         meetingMode = row.meeting_mode or row.mode or 'IN_PERSON',
         locationType = row.location_type or row.locationType or (locationRef and 'LEGACY' or nil),
         locationRef = locationRef,
-        quote = row.quote_minor ~= nil and { amountMinor = row.quote_minor, currency = row.quote_currency or row.currency, quotedAt = row.quoted_at, quoteId = row.quote_id, expiresAt = row.quote_expires_at } or nil,
-        agreedPrice = row.agreed_price_minor ~= nil and { amountMinor = row.agreed_price_minor, currency = row.agreed_currency or row.currency, agreedAt = row.agreed_at, quoteId = row.agreed_quote_id } or nil,
-        scheduledAt = row.scheduled_at or row.scheduledAt,
-        startAt = row.started_at or row.start_at or row.startAt,
-        endAt = row.ended_at or row.end_at or row.endAt,
-        completedAt = row.completed_at or row.completedAt,
+        quote = row.quote_minor ~= nil and { amountMinor = row.quote_minor, currency = row.quote_currency or row.currency, quotedAt = quotedAt, quoteId = row.quote_id, expiresAt = quoteExpiresAt } or nil,
+        agreedPrice = row.agreed_price_minor ~= nil and { amountMinor = row.agreed_price_minor, currency = row.agreed_currency or row.currency, agreedAt = agreedAt, quoteId = row.agreed_quote_id } or nil,
+        scheduledAt = scheduledAt,
+        startAt = startAt,
+        endAt = endAt,
+        completedAt = completedAt,
         status = row.status,
         version = row.version,
         correlationId = row.correlation_id or row.correlationId,
         externalReference = row.external_reference or row.externalReference,
-        createdAt = row.created_at or row.createdAt,
-        updatedAt = row.updated_at or row.updatedAt
+        createdAt = createdAt,
+        updatedAt = updatedAt
     }
     return Booking.new(values)
 end

@@ -18,6 +18,10 @@ or completion state is trusted.
 - Fixed a BookingService permission-service field/method name collision exposed
   by the live S11 accept path; injected permission authorization now reaches the
   service without attempting to call the dependency table as a function.
+- Fixed MariaDB DATETIME snapshot serialization and oxmysql zero-date row
+  normalization, so negotiated quote expiry values survive persistence and
+  booking rows remain mappable. Worker-mode acceptance now resumes safely from
+  a partially persisted QUOTED/OFFERED/ACCEPTED booking.
 - **NS-111:** Added the WorkerModeService bridge from a claimed NPC customer to
   the canonical BookingService. It selects registered packages/locations,
   applies an authoritative negotiated quote, creates the normal booking
@@ -37,6 +41,8 @@ or completion state is trusted.
   migration, schema, and profile contracts).
 - The booking contract suite now covers an injected permission service on the
   draft-creation path that previously failed during live S11 acceptance.
+- Booking contracts cover SQL DATETIME/zero-date row normalization and UTC epoch
+  serialization; worker-mode contracts cover partial booking resumption.
 - Lua parser check — pass for all Lua files.
 - `git diff --check` — pass.
 

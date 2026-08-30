@@ -47,6 +47,26 @@ local function invalid(message, details)
     return Result.err(Codes.REPOSITORY_INVALID, message, details)
 end
 
+local function databaseTimestamp(value, field)
+    if value == nil then return nil end
+    if type(value) == 'number' then
+        if not integer(value, 0) then return nil, invalid(field .. ' timestamp is invalid') end
+        local ok, formatted = pcall(os.date, '!%Y-%m-%d %H:%M:%S.000', value)
+        if not ok or type(formatted) ~= 'string' then return nil, invalid(field .. ' timestamp is invalid') end
+        return formatted
+    end
+    if type(value) ~= 'string' or not text(value, 64) then return nil, invalid(field .. ' timestamp is invalid') end
+
+    local date, clock, remainder = value:match('^(%d%d%d%d%-%d%d%-%d%d)[ T](%d%d:%d%d:%d%d)(.*)$')
+    if not date or date == '0000-00-00' then return nil, invalid(field .. ' timestamp is invalid') end
+    if remainder == '' or remainder == 'Z' then return date .. ' ' .. clock .. '.000' end
+
+    local fraction = remainder:match('^%.(%d+)$') or remainder:match('^%.(%d+)Z$')
+    if not fraction then return nil, invalid(field .. ' timestamp is invalid') end
+    fraction = (fraction .. '000'):sub(1, 3)
+    return date .. ' ' .. clock .. '.' .. fraction
+end
+
 local function normalizeSnapshot(value, field)
     if type(value) ~= 'table' then return nil, invalid(field .. ' must be a table') end
     local amount = integer(value.amountMinor or value.amount, 0, 100000000000)
@@ -54,9 +74,13 @@ local function normalizeSnapshot(value, field)
     if not amount or not currency or currency:match('^[A-Z][A-Z][A-Z]$') == nil then return nil, invalid(field .. ' snapshot is invalid') end
     local quoteId = value.quoteId or value.quote_id
     if quoteId ~= nil and not text(quoteId, 128) then return nil, invalid(field .. ' quote ID is invalid') end
-    local expiresAt = value.expiresAt or value.expires_at
-    if expiresAt ~= nil and not (type(expiresAt) == 'number' or text(expiresAt, 64)) then return nil, invalid(field .. ' expiry is invalid') end
-    return { amountMinor = amount, currency = currency, quotedAt = value.quotedAt, agreedAt = value.agreedAt, expiresAt = expiresAt, quoteId = quoteId }
+    local quotedAt, quotedError = databaseTimestamp(value.quotedAt or value.quoted_at, field .. '.quotedAt')
+    if quotedError then return nil, quotedError end
+    local agreedAt, agreedError = databaseTimestamp(value.agreedAt or value.agreed_at, field .. '.agreedAt')
+    if agreedError then return nil, agreedError end
+    local expiresAt, expiryError = databaseTimestamp(value.expiresAt or value.expires_at, field .. '.expiresAt')
+    if expiryError then return nil, expiryError end
+    return { amountMinor = amount, currency = currency, quotedAt = quotedAt, agreedAt = agreedAt, expiresAt = expiresAt, quoteId = quoteId }
 end
 
 local function safeTableName(value)
@@ -179,8 +203,9 @@ function Repository:updateExpectedVersion(id, expectedVersion, changes)
             if value ~= nil and not text(value, field == 'correlationId' and 96 or 160) then return invalid(field .. ' is invalid') end
             mapped[field == 'locationRef' and 'location_ref' or field == 'correlationId' and 'correlation_id' or 'external_reference'] = value
         else
-            if value ~= nil and not (type(value) == 'number' or text(value, 64)) then return invalid(field .. ' is invalid') end
-            mapped[field == 'scheduledAt' and 'scheduled_at' or field == 'startAt' and 'started_at' or field == 'endAt' and 'ended_at' or 'completed_at'] = value
+            local timestamp, timestampError = databaseTimestamp(value, field)
+            if timestampError then return nil, timestampError end
+            mapped[field == 'scheduledAt' and 'scheduled_at' or field == 'startAt' and 'started_at' or field == 'endAt' and 'ended_at' or 'completed_at'] = timestamp
         end
     end
     return self._base:updateExpectedVersion(id, expectedVersion, mapped)

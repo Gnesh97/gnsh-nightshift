@@ -34,6 +34,11 @@ All notable changes to NightShift are documented here.
 - Fixed the BookingService permission-service field/method name collision that
   caused S11 acceptance to throw while creating the negotiated booking; added
   a regression contract for injected permission authorization.
+- Fixed MariaDB DATETIME boundary handling for negotiated booking snapshots:
+  numeric epoch expiries are serialized as UTC DATETIME values, SQL timestamps
+  are normalized back to the domain UTC shape, and zero-date oxmysql values no
+  longer break booking row mapping. Partial QUOTED/OFFERED/ACCEPTED bookings
+  now resume idempotently after a failed acceptance attempt.
 - Local full Lua contracts, parser checks, and `git diff --check` pass. Live
   FiveM player/session/proximity/settlement smoke remains the operator runtime
   gate; restart commands are intentionally left to the server operator.

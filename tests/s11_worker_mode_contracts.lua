@@ -37,6 +37,15 @@ do
     workerModeCheck(accepted.ok and accepted.value.booking.status == 'RESERVED', 'accepted negotiation should bridge into a reserved booking')
     workerModeCheck(availabilityState.state == 'BUSY' and availabilityState.bookingId == accepted.value.booking.id, 'accepted worker booking must lock availability')
     workerModeCheck(accepted.value.booking.agreedPrice.amountMinor == accepted.value.negotiation.acceptedPrice.amountMinor, 'booking must freeze negotiated price')
+
+    local partial = bookings[accepted.value.booking.id]
+    partial.status, partial.version = 'QUOTED', 2
+    partial.quote = { amountMinor = accepted.value.negotiation.acceptedPrice.amountMinor, currency = 'USD', quoteId = 'negotiation:' .. accepted.value.negotiation.id }
+    local context = workerMode._contexts[accepted.value.negotiation.id]
+    context.bookingId, context.reservation = nil, nil
+    availabilityState.state, availabilityState.available, availabilityState.bookingId = 'AVAILABLE', true, nil
+    local resumed = workerMode:accept(actor, accepted.value.negotiation.id, accepted.value.negotiation.version)
+    workerModeCheck(resumed.ok and resumed.value.booking.status == 'RESERVED', 'accepted negotiation should resume a persisted quoted booking after a partial failure')
 end
 
 do

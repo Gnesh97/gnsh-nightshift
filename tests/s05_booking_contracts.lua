@@ -69,6 +69,19 @@ do
     local roundTrip = assert(Booking.fromRow(row))
     check(roundTrip.clientRef == playerWorker.clientRef and roundTrip.workerRef == playerWorker.workerRef, 'booking row mapping must preserve participant refs')
 
+    local databaseRow = copy(row)
+    databaseRow.id, databaseRow.version, databaseRow.status = 7, 2, 'QUOTED'
+    databaseRow.quote_minor, databaseRow.quote_currency = 12000, 'USD'
+    databaseRow.quoted_at = '2026-08-29 12:00:00.000'
+    databaseRow.quote_id, databaseRow.quote_expires_at = 'quote:s05:database', false
+    databaseRow.created_at, databaseRow.updated_at = '2026-08-29 11:59:00.000', '2026-08-29 12:00:00.000'
+    local databaseRoundTrip = assert(Booking.fromRow(databaseRow))
+    check(databaseRoundTrip.quote.quotedAt == '2026-08-29T12:00:00Z' and databaseRoundTrip.quote.expiresAt == nil, 'database DATETIME rows must normalize to UTC timestamps and ignore zero-date expiry values')
+    check(databaseRoundTrip.createdAt == '2026-08-29T11:59:00Z', 'database managed timestamps must normalize to the domain timestamp shape')
+    databaseRow.quote_expires_at = '0000-00-00 00:00:00.000'
+    local zeroDateRoundTrip = assert(Booking.fromRow(databaseRow))
+    check(zeroDateRoundTrip.quote.expiresAt == nil, 'zero-date DATETIME strings must be treated as absent nullable timestamps')
+
     local invalid, invalidError = Booking.new(bookingInput({ clientType = 'PLAYER', clientRef = '' }))
     check(not invalid and invalidError.error.code == NightShift.Errors.Codes.BOOKING_INVALID, 'invalid participant ref must fail closed')
 end
@@ -120,6 +133,16 @@ do
         quote = { amountMinor = 12000, currency = 'USD', quotedAt = '2026-08-29T12:00:00Z' }
     })
     check(updated.ok and updated.value.version == 2 and calls.update.sql:find('quote_minor', 1, true) ~= nil, 'booking repository updates must be versioned and snapshot-aware')
+    local expiryEpoch = 1700000000
+    local expiryUpdate = repository:updateExpectedVersion(7, 2, {
+        quote = { amountMinor = 12000, currency = 'USD', quotedAt = expiryEpoch, expiresAt = expiryEpoch + 300 }
+    })
+    local expectedExpiry = os.date('!%Y-%m-%d %H:%M:%S.000', expiryEpoch + 300)
+    local expirySerialized = false
+    for _, parameter in ipairs(calls.update.params or {}) do
+        if parameter == expectedExpiry then expirySerialized = true end
+    end
+    check(expiryUpdate.ok and expirySerialized, 'numeric booking timestamps must be serialized as UTC MariaDB DATETIME values')
     local immutable = repository:updateExpectedVersion(7, 1, { workerRef = 'other' })
     check(not immutable.ok and immutable.error.code == NightShift.Errors.Codes.REPOSITORY_INVALID, 'booking participants must remain immutable')
 end
