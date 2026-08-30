@@ -38,12 +38,13 @@ local function convarBoolean(name)
 end
 
 local configured = convarBoolean('nightshift_s11_smoke_commands')
-if configured ~= nil then
-    enabled = configured
-elseif convarBoolean('nightshift_s10_smoke_commands') == true then
+local legacyEnabled = convarBoolean('nightshift_s10_smoke_commands') == true
+if legacyEnabled then
     -- S10 and S11 are one development smoke suite. Preserve the existing S10
     -- opt-in so advancing the sprint does not require another server.cfg line.
     enabled = true
+elseif configured ~= nil then
+    enabled = configured
 end
 if not enabled then return end
 

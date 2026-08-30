@@ -37,6 +37,7 @@ do
         RegisterCommand = function(name, callback, restricted) registered[name] = { callback = callback, restricted = restricted } end,
         GetConvar = function(name, fallback)
             if name == 'nightshift_s10_smoke_commands' then return 'true' end
+            if name == 'nightshift_s11_smoke_commands' then return 'false' end
             return fallback
         end
     }

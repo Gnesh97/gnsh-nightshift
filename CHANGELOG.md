@@ -27,8 +27,8 @@ All notable changes to NightShift are documented here.
   one-time settlement, profile counters, BUSY release, token replay, and
   idempotent settlement behavior. No database migration is required.
 - Smoke registration now reuses the existing S10 development opt-in for S11,
-  so moving between sprint smoke suites does not require another `server.cfg`
-  setting; an explicit S11 flag still takes precedence when provided.
+  including hosts that report an unset S11 convar as `false`, so moving between
+  sprint smoke suites does not require another `server.cfg` setting.
 - Local full Lua contracts, parser checks, and `git diff --check` pass. Live
   FiveM player/session/proximity/settlement smoke remains the operator runtime
   gate; restart commands are intentionally left to the server operator.

@@ -37,9 +37,8 @@ or completion state is trusted.
 
 The S11 commands are development-only and are automatically available in the
 development environment. The existing `nightshift_s10_smoke_commands=true`
-opt-in also enables S11 for backward-compatible sprint progression; an
-explicit `nightshift_s11_smoke_commands` value takes precedence. The command
-sequence is:
+opt-in also enables S11 for backward-compatible sprint progression, including
+hosts that report an unset S11 convar as `false`. The command sequence is:
 
 ```text
 /nightshift_s11_begin [district] [zone] [package]
