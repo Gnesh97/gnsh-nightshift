@@ -266,6 +266,32 @@ do
     check(offered.ok and offered.value.status == 'OFFERED', 'booking offer must use the state machine')
     local accepted = service:accept({ type = 'PLAYER', ref = 'identity:worker-1' }, draft.value.id, 3)
     check(accepted.ok and accepted.value.status == 'ACCEPTED', 'booking accept must use expected version')
+
+    local permissionCalls = 0
+    local permissionService = {
+        authorize = function(_, source, permission)
+            permissionCalls = permissionCalls + 1
+            check(source == 42 and permission == 'booking.manage', 'booking permission service must receive the player source and capability')
+            return result({ allowed = true })
+        end
+    }
+    local permissionedService = assert(BookingService.new({
+        repository = repo,
+        timelineService = timeline,
+        permissionService = permissionService,
+        catalogResolver = function(id)
+            return result({ id = id, priceMinor = 10000, durationMinutes = 30, currency = 'USD' })
+        end
+    }))
+    local permissionedDraft = permissionedService:createDraft(
+        { type = 'PLAYER', ref = 'identity:permissioned', source = 42 },
+        bookingInput({
+            idempotencyKey = 's05-booking-permission-service',
+            workerRef = 'identity:another-worker'
+        })
+    )
+    check(permissionedDraft.ok and permissionCalls == 1, 'booking creation must use the injected permission service without a method collision')
+
     local stale = service:cancel({ type = 'PLAYER', ref = 'identity:worker-1' }, draft.value.id, 3, 'client-request')
     check(not stale.ok and stale.error.code == NightShift.Errors.Codes.VERSION_CONFLICT, 'stale booking version must be rejected')
     local cancelled = service:cancel({ type = 'PLAYER', ref = 'identity:worker-1' }, draft.value.id, 4, 'client-request')

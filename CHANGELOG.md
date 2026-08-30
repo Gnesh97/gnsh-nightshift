@@ -31,6 +31,9 @@ All notable changes to NightShift are documented here.
   sprint smoke suites does not require another `server.cfg` setting.
 - Fixed negotiation worker-reference validation for the canonical QBCore/FiveM
   identity key format (`length:identifier|length:character`).
+- Fixed the BookingService permission-service field/method name collision that
+  caused S11 acceptance to throw while creating the negotiated booking; added
+  a regression contract for injected permission authorization.
 - Local full Lua contracts, parser checks, and `git diff --check` pass. Live
   FiveM player/session/proximity/settlement smoke remains the operator runtime
   gate; restart commands are intentionally left to the server operator.

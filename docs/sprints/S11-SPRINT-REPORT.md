@@ -15,6 +15,9 @@ or completion state is trusted.
   price snapshots.
 - Worker identity references accept the canonical length-prefixed identity keys
   emitted by the FiveM/QBCore identity service.
+- Fixed a BookingService permission-service field/method name collision exposed
+  by the live S11 accept path; injected permission authorization now reaches the
+  service without attempting to call the dependency table as a function.
 - **NS-111:** Added the WorkerModeService bridge from a claimed NPC customer to
   the canonical BookingService. It selects registered packages/locations,
   applies an authoritative negotiated quote, creates the normal booking
@@ -32,6 +35,8 @@ or completion state is trusted.
 
 - `lua tests/run.lua` — pass (S05–S11 plus core, provider, repository,
   migration, schema, and profile contracts).
+- The booking contract suite now covers an injected permission service on the
+  draft-creation path that previously failed during live S11 acceptance.
 - Lua parser check — pass for all Lua files.
 - `git diff --check` — pass.
 

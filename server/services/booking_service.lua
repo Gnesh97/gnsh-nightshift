@@ -120,7 +120,7 @@ function Service.new(options)
         _catalogResolver = options.catalogResolver or options.resolveServicePackage,
         _quote = options.quoteResolver or options.resolveQuote or options.pricingService,
         _authorize = options.authorize,
-        _permission = options.permissionService,
+        _permissionService = options.permissionService,
         _clock = options.clock
     }, Service)
 end
@@ -136,14 +136,14 @@ function Service:_get(id)
     return copy(result.value)
 end
 
-function Service:_permission(actor, booking, action)
+function Service:_checkPermission(actor, booking, action)
     if actor.type == 'SYSTEM' or actor.type == 'ADMIN' then return true end
     if type(self._authorize) == 'function' then
         local ok, allowed = pcall(self._authorize, actor, booking, action)
         if ok and (allowed == true or type(allowed) == 'table' and allowed.ok == true and allowed.value and allowed.value.allowed == true) then return true end
     end
-    if type(self._permission) == 'table' and type(self._permission.authorize) == 'function' and actor.source ~= nil then
-        local ok, result = pcall(self._permission.authorize, self._permission, actor.source, 'booking.manage')
+    if type(self._permissionService) == 'table' and type(self._permissionService.authorize) == 'function' and actor.source ~= nil then
+        local ok, result = pcall(self._permissionService.authorize, self._permissionService, actor.source, 'booking.manage')
         if ok and type(result) == 'table' and result.ok and result.value and result.value.allowed == true then return true end
     end
     local clientOwns = booking.clientType == 'PLAYER' and booking.clientRef == actor.ref
@@ -154,7 +154,7 @@ end
 function Service:_requireOwner(actor, booking, action)
     local normalized, actorError = actorValue(actor)
     if not normalized then return nil, actorError end
-    if not self:_permission(normalized, booking, action) then
+    if not self:_checkPermission(normalized, booking, action) then
         return nil, Result.err(Codes.BOOKING_OWNERSHIP_DENIED, 'actor is not a booking participant', { action = action })
     end
     return normalized
@@ -232,7 +232,7 @@ function Service:createDraft(actor, input)
     }
     local booking, bookingError = Domain.new(values)
     if not booking then return bookingError end
-    if not self:_permission(normalizedActor, booking, 'create') then
+    if not self:_checkPermission(normalizedActor, booking, 'create') then
         return Result.err(Codes.BOOKING_OWNERSHIP_DENIED, 'actor is not a booking participant', { action = 'create' })
     end
     local created = self._repository:create(booking)
