@@ -1,7 +1,7 @@
 NightShift = NightShift or {}
 
--- S11 commands are development-only by default. Production servers must
--- explicitly opt in with nightshift_s11_smoke_commands=true.
+-- S11 commands are development-only by default. Non-development servers must
+-- explicitly opt in with the S11 flag or the existing S10 smoke-suite flag.
 local getConvar = type(GetConvar) == 'function' and GetConvar or rawget(_G, 'GetConvar')
 local registerCommand = type(RegisterCommand) == 'function' and RegisterCommand or rawget(_G, 'RegisterCommand')
 if type(registerCommand) ~= 'function' then return end
@@ -27,13 +27,23 @@ local function environment()
 end
 
 local enabled = environment() == 'development'
-if type(getConvar) == 'function' then
-    local ok, value = pcall(getConvar, 'nightshift_s11_smoke_commands', '')
-    if ok then
-        value = tostring(value):lower()
-        if value == 'true' or value == '1' then enabled = true end
-        if value == 'false' or value == '0' then enabled = false end
-    end
+local function convarBoolean(name)
+    if type(getConvar) ~= 'function' then return nil end
+    local ok, value = pcall(getConvar, name, '')
+    if not ok then return nil end
+    value = tostring(value):lower()
+    if value == 'true' or value == '1' then return true end
+    if value == 'false' or value == '0' then return false end
+    return nil
+end
+
+local configured = convarBoolean('nightshift_s11_smoke_commands')
+if configured ~= nil then
+    enabled = configured
+elseif convarBoolean('nightshift_s10_smoke_commands') == true then
+    -- S10 and S11 are one development smoke suite. Preserve the existing S10
+    -- opt-in so advancing the sprint does not require another server.cfg line.
+    enabled = true
 end
 if not enabled then return end
 

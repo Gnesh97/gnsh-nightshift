@@ -28,6 +28,32 @@ do
 end
 
 do
+    local previousRegisterCommand = rawget(_G, 'RegisterCommand')
+    local previousGetConvar = rawget(_G, 'GetConvar')
+    local previousMeta = getmetatable(_G)
+    local previousServer = NightShift.Server
+    local registered = {}
+    local native = {
+        RegisterCommand = function(name, callback, restricted) registered[name] = { callback = callback, restricted = restricted } end,
+        GetConvar = function(name, fallback)
+            if name == 'nightshift_s10_smoke_commands' then return 'true' end
+            return fallback
+        end
+    }
+    local ok, errorMessage = pcall(function()
+        NightShift.Server = { instance = { results = { config = { config = { environment = 'production' } }, services = { services = {} } } } }
+        _G.RegisterCommand, _G.GetConvar = nil, nil
+        setmetatable(_G, { __index = function(_, key) return native[key] end })
+        dofile('server/dev/s11_smoke.lua')
+        smokeS11Check(registered.nightshift_s11_begin, 'existing S10 smoke opt-in must enable the S11 suite')
+    end)
+    setmetatable(_G, previousMeta)
+    _G.RegisterCommand, _G.GetConvar = previousRegisterCommand, previousGetConvar
+    NightShift.Server = previousServer
+    smokeS11Check(ok, errorMessage)
+end
+
+do
     local startedPayload, completedPayload
     local session, sessionError = NightShift.ClientAppointmentSession.new({
         startTransport = function(payload)

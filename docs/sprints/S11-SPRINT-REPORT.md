@@ -36,9 +36,10 @@ or completion state is trusted.
 ## Runtime Gate
 
 The S11 commands are development-only and are automatically available in the
-development environment. A non-development server must explicitly set
-`nightshift_s11_smoke_commands=true` before the resource is restarted by the
-operator. The command sequence is:
+development environment. The existing `nightshift_s10_smoke_commands=true`
+opt-in also enables S11 for backward-compatible sprint progression; an
+explicit `nightshift_s11_smoke_commands` value takes precedence. The command
+sequence is:
 
 ```text
 /nightshift_s11_begin [district] [zone] [package]
