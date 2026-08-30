@@ -97,10 +97,11 @@ function Base:_map(row)
         if mapped.ok ~= true then
             local source = mapped.error or mapped
             local details = source and source.details
+            local nestedDetails = type(details) == 'table' and details or nil
             return nil, mapError('repository row mapper returned an error', {
-                cause = source and source.code or nil,
-                causeMessage = source and source.message or nil,
-                causeDetails = type(details) == 'table' and details or nil
+                cause = nestedDetails and nestedDetails.cause or source and source.code or nil,
+                causeMessage = nestedDetails and nestedDetails.causeMessage or source and source.message or nil,
+                causeDetails = nestedDetails and (nestedDetails.causeDetails or nestedDetails) or nil
             })
         end
         mapped = mapped.value

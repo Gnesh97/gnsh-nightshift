@@ -91,6 +91,7 @@ end
 -- invalid for normal domain inputs.
 local function normalizeRowNullable(value)
     if value == false then return nil end
+    if type(value) == 'string' and value:match('^%s*$') then return nil end
     return value
 end
 
