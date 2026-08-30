@@ -504,6 +504,12 @@ local defaultStages = {
             if not created then return err end
             pricing = created
         end
+        local negotiation = options.negotiationService or options.negotiation
+        if negotiation == nil and NightShift.NegotiationService then
+            local created, err = NightShift.NegotiationService.new({ config = config.negotiation or NightShift.NegotiationConfig, clock = options.clock })
+            if not created then return err end
+            negotiation = created
+        end
         local moneyAvailable = type(money) == 'table' and type(money.has) == 'function' and type(money.remove) == 'function' and type(money.add) == 'function'
         if moneyAvailable and type(money.isAvailable) == 'function' then
             local ok, available = pcall(money.isAvailable, money)
@@ -609,6 +615,37 @@ local defaultStages = {
             if not created then return err end
             refund = created
         end
+        local appointmentSession = options.appointmentSessionService or options.appointmentSession
+        if appointmentSession == nil and NightShift.AppointmentSessionService and booking then
+            local created, err = NightShift.AppointmentSessionService.new({
+                bookingService = booking,
+                locationService = locationService,
+                config = config.appointmentSession or NightShift.AppointmentSessionConfig,
+                clock = options.clock,
+                locationVerifier = options.appointmentLocationVerifier or options.appointmentProximityCheck,
+                allowConfiguredLocation = options.appointmentAllowConfiguredLocation == true
+            })
+            if not created then return err end
+            appointmentSession = created
+        end
+        local workerMode = options.workerModeService or options.workerMode
+        if workerMode == nil and NightShift.WorkerModeService and negotiation and npcCustomer and workerAvailability and booking then
+            local created, err = NightShift.WorkerModeService.new({
+                customerService = npcCustomer,
+                negotiationService = negotiation,
+                workerAvailabilityService = workerAvailability,
+                bookingService = booking,
+                serviceCatalog = catalog,
+                locationService = locationService,
+                locationReservationService = locationReservation,
+                appointmentSessionService = appointmentSession,
+                settlementService = settlement,
+                workerProfileService = worker,
+                clock = options.clock
+            })
+            if not created then return err end
+            workerMode = created
+        end
         if not bookingTimeline or not reservationService or not booking then
             return { ok = true, deferred = true, reason = 'booking services unavailable', services = {
                 location = locationService, locationReservation = locationReservation, vehicleLocation = vehicleLocation,
@@ -628,6 +665,9 @@ local defaultStages = {
             booking = booking,
             serviceCatalog = catalog,
             pricing = pricing,
+            negotiation = negotiation,
+            appointmentSession = appointmentSession,
+            workerMode = workerMode,
             deposit = deposit,
             settlement = settlement,
             refund = refund,

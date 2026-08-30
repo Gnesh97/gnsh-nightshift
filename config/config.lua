@@ -15,6 +15,8 @@ NightShift.DefaultConfig = {
     npcStreaming = NightShift.NpcStreamingConfig,
     serviceCatalog = NightShift.ServiceCatalogConfig,
     pricing = NightShift.PricingConfig,
+    negotiation = NightShift.NegotiationConfig,
+    appointmentSession = NightShift.AppointmentSessionConfig,
     cancellation = NightShift.CancellationConfig,
     demand = NightShift.DemandConfig,
     heat = { min = 0, max = 100 }

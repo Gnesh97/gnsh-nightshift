@@ -4,6 +4,32 @@ All notable changes to NightShift are documented here.
 
 ## [Unreleased]
 
+### S11 — Worker Mode Negotiation & Vertical Slice
+
+- **NS-110:** Added immutable, server-authoritative NPC offer/counter negotiation
+  with deterministic budget/demand pricing, bounded floors/ceilings, patience
+  and round limits, ownership/idempotency checks, expiry, walk-away, and frozen
+  accepted-price snapshots.
+- **NS-111:** Added the Worker Mode bridge from a claimed S10 customer opportunity
+  into the canonical BookingService, including registered package/location
+  selection, authoritative negotiated quote application, location reservation,
+  and worker `BUSY` locking.
+- **NS-112:** Added actor/booking/location-bound appointment session tokens,
+  server proximity hooks, minimum duration enforcement, one active session per
+  actor, one-time completion, and a thin client transport with no settlement
+  authority.
+- **NS-113:** Added the end-to-end worker vertical-slice scenario and development
+  smoke commands (`/nightshift_s11_begin`, `/nightshift_s11_counter`,
+  `/nightshift_s11_accept`, `/nightshift_s11_travel`, `/nightshift_s11_arrive`,
+  `/nightshift_s11_session_start`, `/nightshift_s11_session_complete`).
+- Added S11 shared enums/error codes, config, bootstrap/manifest wiring, and
+  contract coverage for negotiation, booking bridge, travel/session completion,
+  one-time settlement, profile counters, BUSY release, token replay, and
+  idempotent settlement behavior. No database migration is required.
+- Local full Lua contracts, parser checks, and `git diff --check` pass. Live
+  FiveM player/session/proximity/settlement smoke remains the operator runtime
+  gate; restart commands are intentionally left to the server operator.
+
 ### S10 — Worker Mode Demand & Customer Generation
 
 - **NS-100:** Added configuration-driven district profiles with time/day demand curves, price and risk/heat placeholders, allowlisted discovery-zone labels, availability, and bounded logical-customer capacity; no map coordinates are embedded in district behavior.

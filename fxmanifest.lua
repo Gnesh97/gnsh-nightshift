@@ -17,6 +17,7 @@ shared_scripts {
     'config/npc_streaming.lua',
     'config/demand.lua',
     'config/pricing.lua',
+    'config/negotiation.lua',
     'config/cancellation.lua',
     'config/config.lua'
 }
@@ -87,9 +88,13 @@ server_scripts {
     'server/services/npc_arrival_service.lua',
     'server/services/marketplace_query_service.lua',
     'server/domain/price_quote.lua',
+    'server/domain/negotiation.lua',
     'server/services/service_catalog.lua',
     'server/services/pricing_service.lua',
     'server/services/booking_service.lua',
+    'server/services/negotiation_service.lua',
+    'server/services/appointment_session_service.lua',
+    'server/services/worker_mode_service.lua',
     'server/domain/deposit.lua',
     'server/repositories/deposit_repository.lua',
     'server/services/deposit_service.lua',
@@ -97,7 +102,8 @@ server_scripts {
     'server/services/settlement_service.lua',
     'server/services/refund_service.lua',
     'server/bootstrap.lua',
-    'server/dev/s10_smoke.lua'
+    'server/dev/s10_smoke.lua',
+    'server/dev/s11_smoke.lua'
 }
 client_scripts {
     'client/bootstrap.lua',
@@ -108,5 +114,6 @@ client_scripts {
     'client/npc/spawn.lua',
     'client/npc/navigation.lua',
     'client/npc/despawn.lua',
-    'client/worker_mode/customer_candidates.lua'
+    'client/worker_mode/customer_candidates.lua',
+    'client/interaction/session.lua'
 }

@@ -99,6 +99,23 @@ NightShift.Enums.DemandBands = NightShift.Enums.DemandBands or {
     HIGH = true
 }
 
+NightShift.Enums.NegotiationStates = NightShift.Enums.NegotiationStates or {
+    OFFERED = true,
+    COUNTERED = true,
+    ACCEPTED = true,
+    DECLINED = true,
+    WALKED_AWAY = true,
+    EXPIRED = true
+}
+
+NightShift.Enums.AppointmentSessionStates = NightShift.Enums.AppointmentSessionStates or {
+    PENDING = true,
+    ACTIVE = true,
+    COMPLETED = true,
+    EXPIRED = true,
+    CANCELLED = true
+}
+
 NightShift.Enums.NpcPriceClasses = NightShift.Enums.NpcPriceClasses or {
     [1] = true,
     [2] = true,

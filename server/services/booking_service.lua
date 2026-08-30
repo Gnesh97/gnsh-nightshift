@@ -336,6 +336,19 @@ function Service:applyQuote(actor, id, request, expected)
     return self:_transition(owner, id, 'QUOTED', expected or booking.version, { reason = 'quote-created' }, { quote = quote })
 end
 
+-- Applies a quote that was produced by another server-authoritative domain
+-- (for example worker-mode negotiation). It deliberately skips client input
+-- and still re-checks booking ownership, version, and quote shape.
+function Service:applyAuthoritativeQuote(actor, id, quote, expected)
+    local booking, bookingError = self:_get(id)
+    if not booking then return bookingError end
+    local owner, ownerError = self:_requireOwner(actor, booking, 'quote')
+    if not owner then return ownerError end
+    local snapshot, snapshotError = quoteSnapshot(quote, booking.id)
+    if not snapshot then return snapshotError end
+    return self:_transition(owner, id, 'QUOTED', expected or booking.version, { reason = 'authoritative-quote-created' }, { quote = snapshot })
+end
+
 function Service:offer(actor, id, expected)
     return self:_transition(actor, id, 'OFFERED', expected, { reason = 'offer-created' })
 end
@@ -451,6 +464,7 @@ Service.find = Service.get
 
 Service.create = Service.createDraft
 Service.quote = Service.applyQuote
+Service.applyServerQuote = Service.applyAuthoritativeQuote
 Service.acceptOffer = Service.accept
 NightShift.BookingService = Service
 NightShift.Services = NightShift.Services or {}
