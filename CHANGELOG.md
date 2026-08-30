@@ -14,6 +14,8 @@ All notable changes to NightShift are documented here.
 - Local S10/full Lua contracts, parser checks, and `git diff --check` pass. The development config now enables demand for the controlled FiveM worker opt-in/customer candidate smoke; S11 negotiation is intentionally not started.
 - Added development-only FiveM smoke commands: `/nightshift_s10_available`, `/nightshift_s10_customer`, and `/nightshift_s10_offline`. They enable automatically for the development environment; non-development environments require `nightshift_s10_smoke_commands=true`. Commands require an in-game player source and print only bounded result fields to the server log.
 
+- Added bootstrap filesystem fallback and duplicate-load guard so a resource restart picks up the smoke module even when FXServer cached the manifest before the module was created.
+
 ### S09 — NPC Travel, Streaming & Entity Control
 
 - **NS-090:** Added immutable, server-owned logical travel plans with typed endpoints, deterministic ETA, monotonic progress, spawn thresholds, explicit recovery states, arrival, and return transitions; travel does not require a physical ped.

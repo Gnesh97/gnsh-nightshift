@@ -40,6 +40,9 @@ The development config now enables `features.demand` and automatically enables
 the development-only command surface for a controlled smoke. Non-development
 environments can explicitly opt in before restarting the resource:
 
+Bootstrap also loads the smoke module from the resource filesystem as a
+fallback when FXServer has a stale manifest cache.
+
 ```text
 setr nightshift_s10_smoke_commands true
 restart gnsh-nightshift

@@ -830,3 +830,25 @@ end
 if not NightShift.Server.instance then
     NightShift.Server.bootstrap()
 end
+
+-- The resource manifest normally loads the development smoke module after this
+-- file. Load it from the resource filesystem as a fallback too: a running
+-- FXServer may have cached the manifest before a newly added development file
+-- existed, and a resource restart alone does not always refresh that file list.
+local loadResourceFile = rawget(_G, 'LoadResourceFile')
+local getCurrentResourceName = rawget(_G, 'GetCurrentResourceName')
+if type(loadResourceFile) == 'function' and type(getCurrentResourceName) == 'function' then
+    local resourceName = getCurrentResourceName()
+    local source = loadResourceFile(resourceName, 'server/dev/s10_smoke.lua')
+    if type(source) == 'string' and type(load) == 'function' then
+        local chunk, loadError = load(source, ('@%s/server/dev/s10_smoke.lua'):format(resourceName), 't', _ENV)
+        if type(chunk) == 'function' then
+            local ok, runtimeError = pcall(chunk)
+            if not ok and type(print) == 'function' then
+                print(('[gnsh-nightshift] S10 smoke command loader failed: %s'):format(tostring(runtimeError):sub(1, 160)))
+            end
+        elseif type(print) == 'function' then
+            print(('[gnsh-nightshift] S10 smoke command loader failed: %s'):format(tostring(loadError):sub(1, 160)))
+        end
+    end
+end

@@ -6,6 +6,8 @@ NightShift = NightShift or {}
 local getConvar = rawget(_G, 'GetConvar')
 local registerCommand = rawget(_G, 'RegisterCommand')
 if type(registerCommand) ~= 'function' then return end
+local server = NightShift.Server
+if type(server) == 'table' and server._s10SmokeCommandsLoaded == true then return end
 
 local function stageResult(name)
     local server = NightShift.Server
@@ -119,3 +121,4 @@ end, false)
 if type(print) == 'function' then
     print('[gnsh-nightshift] S10 smoke commands enabled: /nightshift_s10_available [district], /nightshift_s10_customer [district] [zone], /nightshift_s10_offline')
 end
+if type(server) == 'table' then server._s10SmokeCommandsLoaded = true end
