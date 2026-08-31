@@ -71,4 +71,39 @@ do
     smokeS11Check(completed.ok and completedPayload.bookingId == '42' and completedPayload.token == 'appointment-token-1', 'client controller must forward completion without deciding settlement')
 end
 
+do
+    local previousRegisterCommand = rawget(_G, 'RegisterCommand')
+    local previousGetConvar = rawget(_G, 'GetConvar')
+    local previousMeta = getmetatable(_G)
+    local previousServer = NightShift.Server
+    local registered = {}
+    local captured
+    local native = {
+        RegisterCommand = function(name, callback, restricted) registered[name] = { callback = callback, restricted = restricted } end,
+        GetConvar = function(_, fallback) return fallback end
+    }
+    local workerMode = {
+        completeSession = function(_, actor, token, request)
+            captured = { actor = actor, token = token, request = request }
+            return NightShift.Result.ok({ completed = true })
+        end
+    }
+    local ok, errorMessage = pcall(function()
+        NightShift.Server = { instance = { results = {
+            config = { config = { environment = 'development' } },
+            services = { services = { workerMode = workerMode } }
+        } } }
+        _G.RegisterCommand, _G.GetConvar = nil, nil
+        setmetatable(_G, { __index = function(_, key) return native[key] end })
+        dofile('server/dev/s11_smoke.lua')
+        registered.nightshift_s11_session_complete.callback(42, { 'token-1', '5', 'configured_default' })
+        smokeS11Check(captured and captured.actor == 42 and captured.token == 'token-1', 'session completion should forward the player actor')
+        smokeS11Check(captured.request.payerSource == 42, 'session completion should default payer source to the player source')
+    end)
+    setmetatable(_G, previousMeta)
+    _G.RegisterCommand, _G.GetConvar = previousRegisterCommand, previousGetConvar
+    NightShift.Server = previousServer
+    smokeS11Check(ok, errorMessage)
+end
+
 print('NS-112/NS-113 tests passed: direct smoke command registration and thin client session transport')

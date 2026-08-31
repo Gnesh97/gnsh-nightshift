@@ -146,7 +146,9 @@ registerCommand('nightshift_s11_session_complete', function(source, args)
     source = player(source, 'session complete')
     if not source then return end
     local current = services()
-    local request = { bookingId = args and args[2] or nil, locationRef = args and args[3] or 'configured_default', payerSource = args and tonumber(args[4]) or nil }
+    local payerSource = source
+    if args and args[4] ~= nil then payerSource = tonumber(args[4]) end
+    local request = { bookingId = args and args[2] or nil, locationRef = args and args[3] or 'configured_default', payerSource = payerSource }
     report('session-complete', current and current.workerMode and args and args[1] and current.workerMode:completeSession(source, args[1], request) or NightShift.Result.err('WORKER_MODE_INVALID', 'session token is required'))
 end, false)
 
