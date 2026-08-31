@@ -85,7 +85,7 @@ do
     databaseRow.quote_expires_at = '0000-00-00 00:00:00.000'
     local zeroDateRoundTrip = assert(Booking.fromRow(databaseRow))
     check(zeroDateRoundTrip.quote.expiresAt == nil, 'zero-date DATETIME strings must be treated as absent nullable timestamps')
-    for _, invalidExpiry in ipairs({ -1, math.huge, -math.huge, 0 / 0 }) do
+    for _, invalidExpiry in ipairs({ -1, 0, math.huge, -math.huge, 0 / 0 }) do
         databaseRow.quote_expires_at = invalidExpiry
         local invalidNumericRoundTrip = assert(Booking.fromRow(databaseRow))
         check(invalidNumericRoundTrip.quote.expiresAt == nil, 'invalid numeric DATETIME sentinels must be treated as absent nullable timestamps')
