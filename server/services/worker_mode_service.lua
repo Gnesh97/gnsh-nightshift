@@ -409,6 +409,16 @@ function Service:startSession(actorInputValue, bookingId, request)
     return self._session:start(actor, bookingId, request)
 end
 
+function Service:_ensureWorkerProfile(actor)
+    if type(self._workerProfile) ~= 'table' or type(self._workerProfile.ensure) ~= 'function' then
+        return Result.ok(nil, { deferred = true })
+    end
+    local ensuredResult = self._workerProfile:ensure(actor.source)
+    if type(ensuredResult) ~= 'table' then return Result.err(Codes.WORKER_MODE_INVALID, 'worker profile ensure returned an invalid result') end
+    if ensuredResult.ok == false then return ensuredResult end
+    return Result.ok(ensuredResult.ok == true and ensuredResult.value or ensuredResult, ensuredResult.metadata)
+end
+
 function Service:_updateWorkerProfile(actor, booking)
     if self._profileSettled[tostring(booking.id)] then return Result.ok(nil, { idempotent = true }) end
     if type(self._workerProfile) ~= 'table' or type(self._workerProfile.get) ~= 'function' or type(self._workerProfile.update) ~= 'function' then
@@ -435,6 +445,8 @@ function Service:completeSession(actorInputValue, sessionToken, request)
             bookingId = type(request) == 'table' and request.bookingId or nil
         })
     end
+    local profileReady = self:_ensureWorkerProfile(actor)
+    if type(profileReady) ~= 'table' or profileReady.ok ~= true then return profileReady end
     local completedResult = self._session:complete(actor, sessionToken, request)
     local completed, completeError = unwrap(completedResult, Codes.WORKER_MODE_INVALID)
     if not completed then return completeError end

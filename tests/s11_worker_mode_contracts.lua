@@ -83,9 +83,10 @@ do
     local locationReservation = { reserve = function(_, id) return NightShift.Result.ok({ reservationKey = 'location:configured_default:' .. id, status = 'RESERVED' }) end, release = function() return NightShift.Result.ok({}) end }
     local settlementCalls, settlementRequest = 0, nil
     local settlement = { settle = function(_, actor, bookingId, request) settlementCalls = settlementCalls + 1; settlementRequest = NightShift.Validators.copy(request); local booking = bookings[bookingId]; booking.status, booking.version = 'SETTLED', booking.version + 1; return NightShift.Result.ok({ status = 'SETTLED', booking = NightShift.Validators.copy(booking), payment = { idempotencyKey = 'settlement:' .. bookingId } }) end }
-    local profile = { completedBookings = 0, version = 1 }
+    local profile, profileExists, ensureCalls = { completedBookings = 0, version = 1 }, false, 0
     local profileService = {
-        get = function() return NightShift.Result.ok(NightShift.Validators.copy(profile)) end,
+        ensure = function() ensureCalls = ensureCalls + 1; profileExists = true; return NightShift.Result.ok(NightShift.Validators.copy(profile)) end,
+        get = function() return profileExists and NightShift.Result.ok(NightShift.Validators.copy(profile)) or NightShift.Result.err('REPOSITORY_NOT_FOUND', 'missing') end,
         update = function(_, _, changes) profile.completedBookings = changes.completedBookings; profile.version = profile.version + 1; return NightShift.Result.ok(NightShift.Validators.copy(profile)) end
     }
     local negotiation = NightShift.NegotiationService.new({ clock = clock, config = { enabled = true, maxRounds = 3, expirySeconds = 300, minimumOfferFactor = 0.75, maximumOfferFactor = 1.25, counterStepFactor = 0.05, counterPatienceCost = 10 } })
@@ -112,6 +113,7 @@ do
     workerModeCheck(not unavailable.ok and unavailable.error.code == 'SETTLEMENT_NOT_READY', 'unavailable settlement must not consume the appointment session')
     local completed = workerMode:completeSession(actor, session.value.token, { bookingId = booked.value.booking.id, payerSource = 99, locationRef = 'configured_default' })
     workerModeCheck(completed.ok and completed.value.booking.status == 'SETTLED' and settlementCalls == 1, 'vertical slice should settle exactly once')
+    workerModeCheck(ensureCalls >= 1 and profileExists == true, 'session completion should provision a missing worker profile before settlement')
     workerModeCheck(settlementRequest and settlementRequest.payeeSource == 8, 'worker mode settlement should bind the worker as the payee')
     workerModeCheck(profile.completedBookings == 1 and availabilityState.state == 'AVAILABLE', 'vertical slice should update the worker counter and release BUSY state')
     local replay = workerMode:completeSession(actor, session.value.token, { bookingId = booked.value.booking.id, payerSource = 99, locationRef = 'configured_default' })
