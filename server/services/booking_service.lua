@@ -99,6 +99,16 @@ local function quoteSnapshot(value, bookingId)
     return output
 end
 
+local function sameQuoteIdentity(existing, expected)
+    if type(existing) ~= 'table' or type(expected) ~= 'table' then return false end
+    local existingCurrency = type(existing.currency) == 'string' and existing.currency:upper() or nil
+    local expectedCurrency = type(expected.currency) == 'string' and expected.currency:upper() or nil
+    local existingQuoteId = existing.quoteId or existing.id
+    local expectedQuoteId = expected.quoteId or expected.id
+    return tonumber(existing.amountMinor or existing.amount) == tonumber(expected.amountMinor or expected.amount) and
+        existingCurrency == expectedCurrency and tostring(existingQuoteId or '') == tostring(expectedQuoteId or '')
+end
+
 function Service.new(options)
     options = options or {}
     local repository = options.repository or options.bookingRepository
@@ -353,11 +363,20 @@ function Service:offer(actor, id, expected)
     return self:_transition(actor, id, 'OFFERED', expected, { reason = 'offer-created' })
 end
 
-function Service:accept(actor, id, expected)
+function Service:accept(actor, id, expected, options)
     local booking, bookingError = self:_get(id)
     if not booking then return bookingError end
     if type(booking.quote) ~= 'table' then return Result.err(Codes.BOOKING_INVALID, 'booking must have a quote before acceptance') end
-    local agreed = booking.quote and copy(booking.quote) or nil
+    local quoteInput = booking.quote
+    if type(options) == 'table' and options.authoritativeQuote == true then
+        local authoritative, authoritativeError = quoteSnapshot(options.quote, booking.id)
+        if not authoritative then return authoritativeError end
+        if not sameQuoteIdentity(booking.quote, authoritative) then
+            return Result.err(Codes.QUOTE_INVALID, 'authoritative quote does not match booking quote')
+        end
+        quoteInput = authoritative
+    end
+    local agreed = quoteInput and copy(quoteInput) or nil
     if agreed then
         if PriceQuote and type(PriceQuote.new) == 'function' then
             local quote = PriceQuote.new({

@@ -1,11 +1,11 @@
 {
     "schema_version": 2,
-    "commit": "94af9776fbd2f78ce06e852e5d0066199f54170a",
-    "indexed_at": "2026-08-28T15:47:42Z",
+    "commit": "f559de8f046ef7afaeb28f0c1f41c119ef9f7f47",
+    "indexed_at": "2026-08-31T12:12:52Z",
     "project": "C-Users-Gnesh-Desktop-txData-QBCore_70C731.base-resources-standalone-gnsh-nightshift",
-    "nodes": 106,
-    "edges": 98,
-    "original_size": 1769472,
-    "compressed_size": 19337,
+    "nodes": 2268,
+    "edges": 7836,
+    "original_size": 12451840,
+    "compressed_size": 1473892,
     "compression_level": 3
 }

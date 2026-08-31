@@ -17,13 +17,13 @@ do
         claim = function() opportunity.state = 'CLAIMED'; return NightShift.Result.ok(NightShift.Validators.copy(opportunity)) end
     }
     local catalog = { get = function() return NightShift.Result.ok({ id = 'standard', priceMinor = 500, durationMinutes = 30, currency = 'USD', meetingModes = { 'MEET_THERE' }, locationIds = { 'configured_default' } }) end }
-    local bookings, sequence = {}, 0
+    local bookings, sequence, lastAcceptOptions, idempotentBookings = {}, 0, nil, {}
     local draftIdempotencyKey
     local bookingService = {
-        createDraft = function(_, actor, input) draftIdempotencyKey = input.idempotencyKey; sequence = sequence + 1; local value = { id = 'booking-' .. sequence, version = 1, status = 'DRAFT', workerType = 'PLAYER', workerRef = actor.ref, clientType = 'NPC', clientRef = input.clientRef, locationType = input.locationType, locationRef = input.locationRef, meetingMode = input.meetingMode, servicePackage = { id = 'standard', priceMinor = 500, durationMinutes = 30, currency = 'USD' } }; bookings[value.id] = value; return NightShift.Result.ok(NightShift.Validators.copy(value)) end,
+        createDraft = function(_, actor, input) draftIdempotencyKey = input.idempotencyKey; if idempotentBookings[input.idempotencyKey] then return NightShift.Result.ok(NightShift.Validators.copy(idempotentBookings[input.idempotencyKey])) end; sequence = sequence + 1; local value = { id = 'booking-' .. sequence, version = 1, status = 'DRAFT', workerType = 'PLAYER', workerRef = actor.ref, clientType = 'NPC', clientRef = input.clientRef, locationType = input.locationType, locationRef = input.locationRef, meetingMode = input.meetingMode, servicePackage = { id = 'standard', priceMinor = 500, durationMinutes = 30, currency = 'USD' } }; bookings[value.id] = value; idempotentBookings[input.idempotencyKey] = value; return NightShift.Result.ok(NightShift.Validators.copy(value)) end,
         applyAuthoritativeQuote = function(_, actor, id, quote, expected) local value = bookings[id]; value.quote = NightShift.Validators.copy(quote); value.version = expected + 1; return NightShift.Result.ok(NightShift.Validators.copy(value)) end,
         offer = function(_, actor, id, expected) local value = bookings[id]; value.status, value.version = 'OFFERED', expected + 1; return NightShift.Result.ok(NightShift.Validators.copy(value)) end,
-        accept = function(_, actor, id, expected) local value = bookings[id]; value.status, value.version, value.agreedPrice = 'ACCEPTED', expected + 1, { amountMinor = value.quote.amountMinor, currency = value.quote.currency }; return NightShift.Result.ok(NightShift.Validators.copy(value)) end,
+        accept = function(_, actor, id, expected, options) lastAcceptOptions = NightShift.Validators.copy(options); local value = bookings[id]; value.status, value.version, value.agreedPrice = 'ACCEPTED', expected + 1, { amountMinor = value.quote.amountMinor, currency = value.quote.currency }; return NightShift.Result.ok(NightShift.Validators.copy(value)) end,
         reserve = function(_, actor, id, expected) local value = bookings[id]; value.status, value.version = 'RESERVED', expected + 1; return NightShift.Result.ok(NightShift.Validators.copy(value)) end,
         get = function(_, id) return bookings[id] and NightShift.Result.ok(NightShift.Validators.copy(bookings[id])) or NightShift.Result.err('BOOKING_NOT_FOUND', 'missing') end
     }
@@ -39,6 +39,7 @@ do
     workerModeCheck(draftIdempotencyKey == 'worker-mode:' .. started.value.negotiation.id .. ':3000', 'booking idempotency must be scoped to the current negotiation instance')
     workerModeCheck(availabilityState.state == 'BUSY' and availabilityState.bookingId == accepted.value.booking.id, 'accepted worker booking must lock availability')
     workerModeCheck(accepted.value.booking.agreedPrice.amountMinor == accepted.value.negotiation.acceptedPrice.amountMinor, 'booking must freeze negotiated price')
+    workerModeCheck(lastAcceptOptions and lastAcceptOptions.authoritativeQuote == true and lastAcceptOptions.quote and lastAcceptOptions.quote.expiresAt == nil, 'worker booking acceptance must use the accepted negotiation quote')
 
     local partial = bookings[accepted.value.booking.id]
     partial.status, partial.version = 'QUOTED', 2
@@ -48,6 +49,7 @@ do
     availabilityState.state, availabilityState.available, availabilityState.bookingId = 'AVAILABLE', true, nil
     local resumed = workerMode:accept(actor, accepted.value.negotiation.id, accepted.value.negotiation.version)
     workerModeCheck(resumed.ok and resumed.value.booking.status == 'RESERVED', 'accepted negotiation should resume a persisted quoted booking after a partial failure')
+    workerModeCheck(lastAcceptOptions and lastAcceptOptions.authoritativeQuote == true and lastAcceptOptions.quote and lastAcceptOptions.quote.expiresAt == nil, 'partial worker booking must use an authoritative quote without stale expiry')
 end
 
 do

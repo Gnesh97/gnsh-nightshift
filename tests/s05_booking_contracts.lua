@@ -315,6 +315,21 @@ do
     local expiredAccepted = service:accept({ type = 'PLAYER', ref = 'identity:worker-1' }, expiredDraft.value.id, expiredOffered.value.version)
     check(not expiredAccepted.ok and expiredAccepted.error.code == NightShift.Errors.Codes.QUOTE_EXPIRED, 'expired booking quotes must return a quote error instead of crashing')
 
+    local retryDraft = service:createDraft({ type = 'PLAYER', ref = 'identity:worker-1' }, bookingInput({ idempotencyKey = 's05-booking-worker-retry' }))
+    local retryQuoted = service:applyAuthoritativeQuote({ type = 'PLAYER', ref = 'identity:worker-1' }, retryDraft.value.id, {
+        amountMinor = 12000, currency = 'USD', quotedAt = '2026-08-29T11:00:00Z', expiresAt = '2026-08-29T11:01:00Z',
+        quoteId = 'negotiation:s05-worker-retry'
+    }, 1)
+    local retryOffered = service:offer({ type = 'PLAYER', ref = 'identity:worker-1' }, retryDraft.value.id, retryQuoted.value.version)
+    local retryAccepted = service:accept({ type = 'PLAYER', ref = 'identity:worker-1' }, retryDraft.value.id, retryOffered.value.version, {
+        authoritativeQuote = true,
+        quote = {
+            amountMinor = 12000, currency = 'USD', quotedAt = '2026-08-29T12:00:00Z',
+            quoteId = 'negotiation:s05-worker-retry', bookingId = retryDraft.value.id
+        }
+    })
+    check(retryAccepted.ok and retryAccepted.value.status == 'ACCEPTED', 'authoritative worker quote must resume an expired partial booking')
+
     local permissionCalls = 0
     local permissionService = {
         authorize = function(_, source, permission)

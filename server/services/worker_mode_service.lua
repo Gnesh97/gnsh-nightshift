@@ -290,7 +290,15 @@ function Service:_materialize(context, negotiation)
         if not booking then return bookingError end
     end
     if shouldAccept then
-        local acceptedResult = self._booking:accept(actor, booking.id, booking.version)
+        local acceptanceOptions = {
+            authoritativeQuote = true,
+            quote = {
+                quoteId = quote.quoteId, bookingId = quote.bookingId,
+                amountMinor = quote.amountMinor, currency = quote.currency,
+                quotedAt = quote.quotedAt
+            }
+        }
+        local acceptedResult = self._booking:accept(actor, booking.id, booking.version, acceptanceOptions)
         booking, bookingError = unwrap(acceptedResult, Codes.WORKER_MODE_INVALID)
         if not booking then return bookingError end
     end
