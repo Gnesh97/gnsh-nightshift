@@ -23,6 +23,14 @@ local function text(value, maximum)
     return type(value) == 'string' and value:match('%S') ~= nil and #value <= (maximum or 160)
 end
 
+local function bookingIdValue(value)
+    if type(value) == 'number' then
+        if value ~= value or value == math.huge or value == -math.huge or value < 1 or value ~= math.floor(value) then return nil end
+        value = tostring(value)
+    end
+    return text(value, 160) and value or nil
+end
+
 local function token(value, maximum)
     return text(value, maximum) and value:match('^[A-Za-z][A-Za-z0-9_.:%-]*$') ~= nil
 end
@@ -260,12 +268,14 @@ function Service:set(source, state, options)
     if state == 'AVAILABLE' then return self:setAvailable(source, options) end
     if state == 'OFFLINE' then return self:setOffline(source, options and options.reason or 'server') end
     options = options or {}
-    if type(options) ~= 'table' or not text(options.bookingId or options.booking_id, 160) then return denied('BUSY state requires a server booking lock') end
-    return self:lockForBooking(source, options.bookingId or options.booking_id)
+    local bookingId = type(options) == 'table' and bookingIdValue(options.bookingId or options.booking_id) or nil
+    if not bookingId then return denied('BUSY state requires a server booking lock') end
+    return self:lockForBooking(source, bookingId)
 end
 
 function Service:lockForBooking(source, bookingId)
-    if not text(bookingId, 160) then return invalid('worker booking lock requires a booking ID') end
+    bookingId = bookingIdValue(bookingId)
+    if not bookingId then return invalid('worker booking lock requires a booking ID') end
     local record, identity = self:_recordFor(source, true)
     if not record then return identity end
     if record.state == 'BUSY' then
@@ -288,7 +298,8 @@ function Service:lockForBooking(source, bookingId)
 end
 
 function Service:releaseBooking(source, bookingId, options)
-    if not text(bookingId, 160) then return invalid('worker booking release requires a booking ID') end
+    bookingId = bookingIdValue(bookingId)
+    if not bookingId then return invalid('worker booking release requires a booking ID') end
     if options ~= nil and type(options) ~= 'table' then return invalid('worker booking release options must be a table') end
     local record, identity = self:_recordFor(source, true)
     if not record then return identity end
