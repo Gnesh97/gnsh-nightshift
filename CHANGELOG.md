@@ -39,6 +39,10 @@ All notable changes to NightShift are documented here.
   are normalized back to the domain UTC shape, and zero-date oxmysql values no
   longer break booking row mapping. Partial QUOTED/OFFERED/ACCEPTED bookings
   now resume idempotently after a failed acceptance attempt.
+- Added a development-only, virtual settlement fallback with explicit dry-run
+  labeling, deterministic NPC payer resolution, and worker-payee binding. It
+  exercises S11 completion without a second player source or any QBCore money
+  mutation; live settlement remains gated by real adapter capabilities.
 - Local full Lua contracts, parser checks, and `git diff --check` pass. Live
   FiveM player/session/proximity/settlement smoke remains the operator runtime
   gate; restart commands are intentionally left to the server operator.

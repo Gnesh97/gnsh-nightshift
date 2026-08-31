@@ -98,7 +98,7 @@ do
         dofile('server/dev/s11_smoke.lua')
         registered.nightshift_s11_session_complete.callback(42, { 'token-1', '5', 'configured_default' })
         smokeS11Check(captured and captured.actor == 42 and captured.token == 'token-1', 'session completion should forward the player actor')
-        smokeS11Check(captured.request.payerSource == 42, 'session completion should default payer source to the player source')
+        smokeS11Check(captured.request.payerSource == nil, 'session completion should leave the optional payer source unset')
     end)
     setmetatable(_G, previousMeta)
     _G.RegisterCommand, _G.GetConvar = previousRegisterCommand, previousGetConvar

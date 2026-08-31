@@ -203,6 +203,22 @@ do
 end
 
 do
+    local adapter = NightShift.MoneyAdapters.development.new({ enabled = true })
+    local first = adapter:transfer(65001, 21, 'virtual', 550, 'NightShift settlement', 'settlement:dev:1:transfer', 'USD')
+    check(first.ok and first.value.status == 'SUCCEEDED' and first.value.dryRun == true, 'development settlement adapter should report a labeled dry-run transfer')
+    local replay = adapter:transfer(65001, 21, 'virtual', 550, 'NightShift settlement', 'settlement:dev:1:transfer', 'USD')
+    check(replay.ok and replay.metadata and replay.metadata.idempotent == true, 'development settlement adapter should replay a transfer by key')
+    local mismatch = adapter:transfer(65001, 21, 'virtual', 551, 'NightShift settlement', 'settlement:dev:1:transfer', 'USD')
+    err(mismatch, 'MONEY_INVALID_ARGUMENT', 'development settlement adapter must reject a key fingerprint mismatch')
+end
+
+do
+    local synthetic = NightShift.ServerBootstrap.developmentPayerResolver({ clientRef = 'npc-customer:8:1' }, { source = 8 }, { payeeSource = 8 })
+    check(synthetic ~= 8 and synthetic >= 1, 'development settlement should use a distinct synthetic NPC payer')
+    check(NightShift.ServerBootstrap.developmentPayerResolver({}, { source = 8 }, { payerSource = 99, payeeSource = 8 }) == 99, 'development settlement should preserve an explicit payer source')
+end
+
+do
     local phone = NightShift.OptionalProviders.Phone.new()
     check(phone:isAvailable() == false, 'missing phone should be unavailable')
     err(phone:openApp(1, 'browse', {}), 'CAPABILITY_UNAVAILABLE', 'missing phone operation')

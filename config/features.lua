@@ -7,6 +7,7 @@ NightShift.FeatureDefaults = {
     serviceCatalog = true,
     pricing = true,
     payments = false,
+    developmentSettlement = false,
     refunds = true,
     physicalNpc = false,
     deposits = false,

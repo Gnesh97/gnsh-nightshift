@@ -440,7 +440,9 @@ function Service:completeSession(actorInputValue, sessionToken, request)
     if not completed then return completeError end
     local booking = completed.booking
     if type(booking) ~= 'table' then return invalid('appointment session returned no completed booking') end
-    local settlementResult = self._settlement:settle(actor, booking.id, request or {})
+    local settlementRequest = copy(request or {})
+    settlementRequest.payeeSource = settlementRequest.payeeSource or actor.source
+    local settlementResult = self._settlement:settle(actor, booking.id, settlementRequest)
     local settlement, settlementError = unwrap(settlementResult, Codes.SETTLEMENT_NOT_READY)
     if not settlement then return settlementError end
     local profileResult = self:_updateWorkerProfile(actor, booking)

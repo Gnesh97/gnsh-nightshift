@@ -81,8 +81,8 @@ do
         get = function(_, id) return bookings[id] and NightShift.Result.ok(NightShift.Validators.copy(bookings[id])) or NightShift.Result.err('BOOKING_NOT_FOUND', 'missing') end
     }
     local locationReservation = { reserve = function(_, id) return NightShift.Result.ok({ reservationKey = 'location:configured_default:' .. id, status = 'RESERVED' }) end, release = function() return NightShift.Result.ok({}) end }
-    local settlementCalls = 0
-    local settlement = { settle = function(_, actor, bookingId) settlementCalls = settlementCalls + 1; local booking = bookings[bookingId]; booking.status, booking.version = 'SETTLED', booking.version + 1; return NightShift.Result.ok({ status = 'SETTLED', booking = NightShift.Validators.copy(booking), payment = { idempotencyKey = 'settlement:' .. bookingId } }) end }
+    local settlementCalls, settlementRequest = 0, nil
+    local settlement = { settle = function(_, actor, bookingId, request) settlementCalls = settlementCalls + 1; settlementRequest = NightShift.Validators.copy(request); local booking = bookings[bookingId]; booking.status, booking.version = 'SETTLED', booking.version + 1; return NightShift.Result.ok({ status = 'SETTLED', booking = NightShift.Validators.copy(booking), payment = { idempotencyKey = 'settlement:' .. bookingId } }) end }
     local profile = { completedBookings = 0, version = 1 }
     local profileService = {
         get = function() return NightShift.Result.ok(NightShift.Validators.copy(profile)) end,
@@ -112,6 +112,7 @@ do
     workerModeCheck(not unavailable.ok and unavailable.error.code == 'SETTLEMENT_NOT_READY', 'unavailable settlement must not consume the appointment session')
     local completed = workerMode:completeSession(actor, session.value.token, { bookingId = booked.value.booking.id, payerSource = 99, locationRef = 'configured_default' })
     workerModeCheck(completed.ok and completed.value.booking.status == 'SETTLED' and settlementCalls == 1, 'vertical slice should settle exactly once')
+    workerModeCheck(settlementRequest and settlementRequest.payeeSource == 8, 'worker mode settlement should bind the worker as the payee')
     workerModeCheck(profile.completedBookings == 1 and availabilityState.state == 'AVAILABLE', 'vertical slice should update the worker counter and release BUSY state')
     local replay = workerMode:completeSession(actor, session.value.token, { bookingId = booked.value.booking.id, payerSource = 99, locationRef = 'configured_default' })
     workerModeCheck(not replay.ok and replay.error.code == 'APPOINTMENT_SESSION_REPLAY' and settlementCalls == 1, 'completed session replay must not settle twice')

@@ -34,6 +34,10 @@ or completion state is trusted.
   smoke commands, bootstrap/manifest wiring, and regression tests for settlement
   once, profile counter updates, availability release, replay, and restart-safe
   settlement semantics.
+- Added an explicitly development-only settlement dry-run fallback. It uses a
+  virtual, idempotent adapter with a synthetic NPC payer, never touches QBCore
+  balances, and lets the full session-completion path be exercised without a
+  second player source. Production/live payment adapters remain capability-gated.
 
 ## Verification
 
@@ -64,18 +68,24 @@ hosts that report an unset S11 convar as `false`. The command sequence is:
 ```
 
 The session verifier requires either the configured proximity callback or the
-server's native player/location check. Settlement also requires an enabled
-money adapter and a payer source/resolver; otherwise it fails closed with
-`SETTLEMENT_NOT_READY` and does not mint payment.
+server's native player/location check. In development, the default
+`developmentSettlement` feature supplies a labeled virtual dry-run settlement
+when real payments are disabled; it has no money effect and resolves the NPC
+payer without a source ID. Live settlement still requires an enabled money
+adapter with safe atomic/idempotent capabilities and a real payer resolver;
+otherwise it fails closed with `SETTLEMENT_NOT_READY` and does not mint payment.
 
 ## Exit Gate
 
 - Negotiation domain: PASS
 - Unified booking bridge: PASS
 - Appointment session verifier: PASS
-- One-time settlement/profile update: PASS (local injected vertical slice)
+- One-time settlement/profile update: PASS (local injected vertical slice and
+  development dry-run runtime path; no real money effect)
 - Restart-safe settlement contract: PASS via existing durable settlement
   idempotency and the S11 replay assertions
 
-**S11 Exit Gate: PASS — local contracts and parser checks complete. Live FiveM
-player/session/settlement smoke remains the operator runtime gate.**
+**S11 Exit Gate: PASS — local contracts and parser checks complete. Development
+FiveM player/session smoke can now complete through a clearly labeled dry-run;
+live financial settlement remains the operator runtime gate until a real
+idempotent/atomic money adapter is supplied.**

@@ -71,6 +71,26 @@ local function createRuntimeDatabaseAdapter()
     return adapter
 end
 
+local function syntheticDevelopmentSource(reference, avoid)
+    local value = tostring(reference or 'nightshift-npc')
+    local hash = 17
+    for index = 1, #value do hash = (hash * 31 + string.byte(value, index)) % 15000 end
+    local source = 50000 + hash
+    if source == avoid then source = source + 1 end
+    if source > 64999 then source = 50000 end
+    return source
+end
+
+local function developmentPayerResolver(booking, actor, request)
+    local requested = type(request) == 'table' and tonumber(request.payerSource) or nil
+    if requested and requested >= 1 and math.floor(requested) == requested then return requested end
+    local workerSource = type(request) == 'table' and tonumber(request.payeeSource) or nil
+    if not workerSource and type(actor) == 'table' then workerSource = tonumber(actor.source) end
+    if not workerSource and type(booking) == 'table' then workerSource = tonumber(booking.workerSource) end
+    local reference = type(booking) == 'table' and (booking.clientRef or booking.clientProfileId or booking.clientProfileKey) or nil
+    return syntheticDevelopmentSource(reference, workerSource)
+end
+
 local defaultStages = {
     config = function(context, bootstrap)
         local options = bootstrap and bootstrap.options or {}
@@ -610,6 +630,22 @@ local defaultStages = {
             if not created then return err end
             settlement = created
         end
+        if settlement == nil and config.environment == 'development' and features.payments ~= true and features.developmentSettlement == true and NightShift.DevelopmentMoneyAdapter and NightShift.SettlementService and repositories.payment and booking then
+            local developmentMoney, moneyError = NightShift.DevelopmentMoneyAdapter.new({ enabled = true })
+            if not developmentMoney then return moneyError end
+            local created, err = NightShift.SettlementService.new({
+                repository = repositories.payment,
+                money = developmentMoney,
+                bookingService = booking,
+                config = { enabled = true, account = 'virtual' },
+                payerResolver = developmentPayerResolver,
+                clock = options.clock,
+                depositService = deposit
+            })
+            if not created then return err end
+            settlement = created
+            if type(print) == 'function' then print('[gnsh-nightshift] development settlement enabled (dry-run; no money effects)') end
+        end
         if refund == nil and features.refunds ~= false and moneyAvailable and NightShift.RefundService and repositories.payment then
             local created, err = NightShift.RefundService.new({ repository = repositories.payment, money = money, bookingService = booking, config = config.cancellation, clock = options.clock, depositService = deposit })
             if not created then return err end
@@ -806,6 +842,7 @@ end
 NightShift.ServerBootstrap = Bootstrap
 Bootstrap.applyRuntimeConfig = applyRuntimeConfig
 Bootstrap.createRuntimeDatabaseAdapter = createRuntimeDatabaseAdapter
+Bootstrap.developmentPayerResolver = developmentPayerResolver
 NightShift.Server = NightShift.Server or {}
 NightShift.Server.readiness = readiness.STARTING
 

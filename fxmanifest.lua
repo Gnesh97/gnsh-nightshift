@@ -37,6 +37,7 @@ server_scripts {
     'server/adapters/money/qbox.lua',
     'server/adapters/money/esx.lua',
     'server/adapters/money/standalone.lua',
+    'server/adapters/money/development.lua',
     'server/adapters/optional_base.lua',
     'server/adapters/phone/interface.lua',
     'server/adapters/housing/interface.lua',
