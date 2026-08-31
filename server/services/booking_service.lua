@@ -370,8 +370,19 @@ function Service:accept(actor, id, expected)
             })
             if type(quote) == 'table' and type(quote.accept) == 'function' then
                 local frozen, freezeError = quote:accept(timestamp(self._clock), booking.id)
-                if not frozen then return freezeError end
-                local snapshot = frozen.value and frozen.value.acceptedSnapshot or frozen.value
+                if type(frozen) ~= 'table' then
+                    return freezeError or Result.err(Codes.QUOTE_INVALID, 'quote acceptance returned an invalid result')
+                end
+                if frozen.ok == false or frozen.success == false then return frozen end
+                local frozenValue = frozen.value
+                if frozenValue == nil and frozen.ok == true then
+                    return Result.err(Codes.QUOTE_INVALID, 'quote acceptance returned no snapshot')
+                end
+                if frozenValue == nil then frozenValue = frozen end
+                local snapshot = type(frozenValue) == 'table' and (frozenValue.acceptedSnapshot or frozenValue) or nil
+                if type(snapshot) ~= 'table' or snapshot.amountMinor == nil or snapshot.currency == nil then
+                    return Result.err(Codes.QUOTE_INVALID, 'quote acceptance returned an invalid snapshot')
+                end
                 agreed = {
                     amountMinor = snapshot.amountMinor,
                     currency = snapshot.currency,

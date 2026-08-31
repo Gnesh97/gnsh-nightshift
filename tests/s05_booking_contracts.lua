@@ -309,6 +309,12 @@ do
     local accepted = service:accept({ type = 'PLAYER', ref = 'identity:worker-1' }, draft.value.id, 3)
     check(accepted.ok and accepted.value.status == 'ACCEPTED', 'booking accept must use expected version')
 
+    local expiredDraft = service:createDraft({ type = 'PLAYER', ref = 'identity:worker-1' }, bookingInput({ idempotencyKey = 's05-booking-expired-quote' }))
+    local expiredQuoted = service:applyAuthoritativeQuote({ type = 'PLAYER', ref = 'identity:worker-1' }, expiredDraft.value.id, { amountMinor = 12000, currency = 'USD', quotedAt = '2026-08-29T11:00:00Z', expiresAt = '2026-08-29T11:01:00Z' }, 1)
+    local expiredOffered = service:offer({ type = 'PLAYER', ref = 'identity:worker-1' }, expiredDraft.value.id, expiredQuoted.value.version)
+    local expiredAccepted = service:accept({ type = 'PLAYER', ref = 'identity:worker-1' }, expiredDraft.value.id, expiredOffered.value.version)
+    check(not expiredAccepted.ok and expiredAccepted.error.code == NightShift.Errors.Codes.QUOTE_EXPIRED, 'expired booking quotes must return a quote error instead of crashing')
+
     local permissionCalls = 0
     local permissionService = {
         authorize = function(_, source, permission)
