@@ -430,12 +430,16 @@ function Service:completeSession(actorInputValue, sessionToken, request)
     if type(self._session) ~= 'table' or type(self._session.complete) ~= 'function' then return Result.err(Codes.WORKER_MODE_INVALID, 'appointment session service is unavailable') end
     local actor, actorError = self:_actor(actorInputValue)
     if not actor then return actorError end
+    if type(self._settlement) ~= 'table' or type(self._settlement.settle) ~= 'function' then
+        return Result.err(Codes.SETTLEMENT_NOT_READY, 'worker mode settlement service is unavailable', {
+            bookingId = type(request) == 'table' and request.bookingId or nil
+        })
+    end
     local completedResult = self._session:complete(actor, sessionToken, request)
     local completed, completeError = unwrap(completedResult, Codes.WORKER_MODE_INVALID)
     if not completed then return completeError end
     local booking = completed.booking
     if type(booking) ~= 'table' then return invalid('appointment session returned no completed booking') end
-    if type(self._settlement) ~= 'table' or type(self._settlement.settle) ~= 'function' then return Result.err(Codes.SETTLEMENT_NOT_READY, 'worker mode settlement service is unavailable', { bookingId = booking.id }) end
     local settlementResult = self._settlement:settle(actor, booking.id, request or {})
     local settlement, settlementError = unwrap(settlementResult, Codes.SETTLEMENT_NOT_READY)
     if not settlement then return settlementError end

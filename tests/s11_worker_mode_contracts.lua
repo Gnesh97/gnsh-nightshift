@@ -105,6 +105,11 @@ do
     local early = workerMode:completeSession(actor, session.value.token, { bookingId = booked.value.booking.id, payerSource = 99, locationRef = 'configured_default' })
     workerModeCheck(not early.ok and early.error.code == 'APPOINTMENT_SESSION_TOO_EARLY', 'vertical slice should reject instant completion')
     now = now + 5
+    local configuredSettlement = workerMode._settlement
+    workerMode._settlement = nil
+    local unavailable = workerMode:completeSession(actor, session.value.token, { bookingId = booked.value.booking.id, payerSource = 99, locationRef = 'configured_default' })
+    workerMode._settlement = configuredSettlement
+    workerModeCheck(not unavailable.ok and unavailable.error.code == 'SETTLEMENT_NOT_READY', 'unavailable settlement must not consume the appointment session')
     local completed = workerMode:completeSession(actor, session.value.token, { bookingId = booked.value.booking.id, payerSource = 99, locationRef = 'configured_default' })
     workerModeCheck(completed.ok and completed.value.booking.status == 'SETTLED' and settlementCalls == 1, 'vertical slice should settle exactly once')
     workerModeCheck(profile.completedBookings == 1 and availabilityState.state == 'AVAILABLE', 'vertical slice should update the worker counter and release BUSY state')
