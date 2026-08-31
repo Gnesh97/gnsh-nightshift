@@ -621,9 +621,10 @@ local defaultStages = {
                 bookingService = booking,
                 locationService = locationService,
                 config = config.appointmentSession or NightShift.AppointmentSessionConfig,
+                environment = config.environment,
                 clock = options.clock,
                 locationVerifier = options.appointmentLocationVerifier or options.appointmentProximityCheck,
-                allowConfiguredLocation = options.appointmentAllowConfiguredLocation == true
+                allowConfiguredLocation = options.appointmentAllowConfiguredLocation
             })
             if not created then return err end
             appointmentSession = created

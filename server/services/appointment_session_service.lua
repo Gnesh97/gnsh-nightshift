@@ -100,10 +100,14 @@ function Service.new(options)
     if not config then return nil, configError end
     local clock = options.clock
     if clock == nil and NightShift.Clock and type(NightShift.Clock.new) == 'function' then clock = NightShift.Clock.new() end
+    local allowConfiguredLocation = options.allowConfiguredLocation
+    if allowConfiguredLocation == nil then
+        allowConfiguredLocation = type(options.environment) == 'string' and options.environment:lower() == 'development'
+    end
     return setmetatable({
         _bookingService = booking, _location = options.locationService or options.location,
         _locationVerifier = options.locationVerifier or options.proximityCheck,
-        _allowConfiguredLocation = options.allowConfiguredLocation == true,
+        _allowConfiguredLocation = allowConfiguredLocation == true,
         _config = config, _clock = clock,
         _sessions = {}, _byBooking = {}, _byActor = {}, _completed = {}, _sequence = 0,
         _tokenGenerator = options.tokenGenerator or options.sessionTokenGenerator

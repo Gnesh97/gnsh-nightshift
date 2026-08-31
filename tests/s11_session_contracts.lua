@@ -48,6 +48,13 @@ do
     local replay = sessions:complete(actor, started.value.token, { bookingId = 'booking-1' })
     sessionCheck(not replay.ok and replay.error.code == 'APPOINTMENT_SESSION_REPLAY', 'session token must be one-time')
 
+    bookings['booking-3'] = { id = 'booking-3', status = 'ARRIVED', version = 1, workerType = 'PLAYER', workerRef = 'player:7', locationType = 'CONFIG_LOCATION', locationRef = 'configured_default' }
+    local developmentSessions = NightShift.AppointmentSessionService.new({
+        bookingService = bookingService, clock = clock, environment = 'development', tokenGenerator = function() return 'development-session-token' end
+    })
+    local developmentStarted = developmentSessions:start(actor, 'booking-3', { locationRef = 'configured_default' })
+    sessionCheck(developmentStarted.ok and developmentStarted.value.token == 'development-session-token', 'development configured location should provide a smoke-test proximity fallback')
+
     bookings['booking-2'] = { id = 'booking-2', status = 'ARRIVED', version = 1, workerType = 'PLAYER', workerRef = 'player:7', locationType = 'CONFIG_LOCATION', locationRef = 'configured_default' }
     local deniedSessions = NightShift.AppointmentSessionService.new({
         bookingService = bookingService,
