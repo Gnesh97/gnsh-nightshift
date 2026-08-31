@@ -18,8 +18,9 @@ do
     }
     local catalog = { get = function() return NightShift.Result.ok({ id = 'standard', priceMinor = 500, durationMinutes = 30, currency = 'USD', meetingModes = { 'MEET_THERE' }, locationIds = { 'configured_default' } }) end }
     local bookings, sequence = {}, 0
+    local draftIdempotencyKey
     local bookingService = {
-        createDraft = function(_, actor, input) sequence = sequence + 1; local value = { id = 'booking-' .. sequence, version = 1, status = 'DRAFT', workerType = 'PLAYER', workerRef = actor.ref, clientType = 'NPC', clientRef = input.clientRef, locationType = input.locationType, locationRef = input.locationRef, meetingMode = input.meetingMode, servicePackage = { id = 'standard', priceMinor = 500, durationMinutes = 30, currency = 'USD' } }; bookings[value.id] = value; return NightShift.Result.ok(NightShift.Validators.copy(value)) end,
+        createDraft = function(_, actor, input) draftIdempotencyKey = input.idempotencyKey; sequence = sequence + 1; local value = { id = 'booking-' .. sequence, version = 1, status = 'DRAFT', workerType = 'PLAYER', workerRef = actor.ref, clientType = 'NPC', clientRef = input.clientRef, locationType = input.locationType, locationRef = input.locationRef, meetingMode = input.meetingMode, servicePackage = { id = 'standard', priceMinor = 500, durationMinutes = 30, currency = 'USD' } }; bookings[value.id] = value; return NightShift.Result.ok(NightShift.Validators.copy(value)) end,
         applyAuthoritativeQuote = function(_, actor, id, quote, expected) local value = bookings[id]; value.quote = NightShift.Validators.copy(quote); value.version = expected + 1; return NightShift.Result.ok(NightShift.Validators.copy(value)) end,
         offer = function(_, actor, id, expected) local value = bookings[id]; value.status, value.version = 'OFFERED', expected + 1; return NightShift.Result.ok(NightShift.Validators.copy(value)) end,
         accept = function(_, actor, id, expected) local value = bookings[id]; value.status, value.version, value.agreedPrice = 'ACCEPTED', expected + 1, { amountMinor = value.quote.amountMinor, currency = value.quote.currency }; return NightShift.Result.ok(NightShift.Validators.copy(value)) end,
@@ -35,6 +36,7 @@ do
     workerModeCheck(started.ok, 'worker mode should create negotiation from a claimed customer')
     local accepted = workerMode:counter(actor, started.value.negotiation.id, started.value.negotiation.currentOfferMinor, started.value.negotiation.version)
     workerModeCheck(accepted.ok and accepted.value.booking.status == 'RESERVED', 'accepted negotiation should bridge into a reserved booking')
+    workerModeCheck(draftIdempotencyKey == 'worker-mode:' .. started.value.negotiation.id .. ':3000', 'booking idempotency must be scoped to the current negotiation instance')
     workerModeCheck(availabilityState.state == 'BUSY' and availabilityState.bookingId == accepted.value.booking.id, 'accepted worker booking must lock availability')
     workerModeCheck(accepted.value.booking.agreedPrice.amountMinor == accepted.value.negotiation.acceptedPrice.amountMinor, 'booking must freeze negotiated price')
 

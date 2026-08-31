@@ -65,6 +65,15 @@ local function sameNegotiatedQuote(existing, expected)
         and tostring(existing.quoteId or '') == tostring(expected.quoteId or '')
 end
 
+local function materializationKey(negotiation)
+    local prefix = 'worker-mode:'
+    local id = tostring(negotiation.id or '')
+    local instance = negotiation.createdAt or negotiation.updatedAt or negotiation.expiresAt or negotiation.version
+    local suffix = instance ~= nil and ':' .. tostring(instance) or ''
+    local available = math.max(1, 128 - #prefix - #suffix)
+    return prefix .. id:sub(1, available) .. suffix
+end
+
 local function actorInput(value)
     if type(value) == 'table' then
         local source = sourceValue(value.source)
@@ -235,7 +244,7 @@ function Service:_materialize(context, negotiation)
     local acceptedPrice = negotiation.acceptedPrice
     if type(acceptedPrice) ~= 'table' then return Result.err(Codes.WORKER_MODE_INVALID, 'accepted negotiation has no frozen price') end
     local input = {
-        idempotencyKey = 'worker-mode:' .. tostring(negotiation.id), initiatorType = 'PLAYER',
+        idempotencyKey = materializationKey(negotiation), initiatorType = 'PLAYER',
         clientType = 'NPC', clientRef = negotiation.customerProfileKey,
         workerType = 'PLAYER', workerRef = actor.ref,
         servicePackageId = context.package.id, meetingMode = context.location.meetingMode,
