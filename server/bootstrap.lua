@@ -901,6 +901,34 @@ NightShift.Server.bootstrap = function(options, context)
     return ok, result
 end
 
+-- FiveM can retain a resource manifest snapshot while files are being added to
+-- a running development resource. Load the development-only money adapter
+-- before the first bootstrap so the settlement stage can still be wired even
+-- when that snapshot does not include the new manifest entry yet.
+local loadResourceFile = type(LoadResourceFile) == 'function' and LoadResourceFile or rawget(_G, 'LoadResourceFile')
+local getCurrentResourceName = type(GetCurrentResourceName) == 'function' and GetCurrentResourceName or rawget(_G, 'GetCurrentResourceName')
+local function loadRuntimeScript(path, label, resourceName)
+    if type(loadResourceFile) ~= 'function' or type(resourceName) ~= 'string' or type(load) ~= 'function' then return false end
+    local source = loadResourceFile(resourceName, path)
+    if type(source) ~= 'string' then return false end
+    local chunk, loadError = load(source, ('@%s/%s'):format(resourceName, path), 't', _ENV)
+    if type(chunk) ~= 'function' then
+        if type(print) == 'function' then print(('[gnsh-nightshift] %s loader failed: %s'):format(label, tostring(loadError):sub(1, 160))) end
+        return false
+    end
+    local ok, runtimeError = pcall(chunk)
+    if not ok then
+        if type(print) == 'function' then print(('[gnsh-nightshift] %s loader failed: %s'):format(label, tostring(runtimeError):sub(1, 160))) end
+        return false
+    end
+    return true
+end
+
+local runtimeResourceName = type(getCurrentResourceName) == 'function' and getCurrentResourceName() or nil
+if NightShift.DevelopmentMoneyAdapter == nil then
+    loadRuntimeScript('server/adapters/money/development.lua', 'development money adapter', runtimeResourceName)
+end
+
 -- A FiveM resource script executes on load; start the server lifecycle here so
 -- `ensure nightshift` cannot leave the resource in STARTING without an
 -- explicit external call. Tests and embedders can still create isolated
@@ -915,20 +943,7 @@ end
 -- existed, and a resource restart alone does not always refresh that file list.
 -- FiveM natives are exposed through the script global lookup, not reliably as
 -- raw entries in _G. Keep the raw fallback for isolated test/embedded hosts.
-local loadResourceFile = type(LoadResourceFile) == 'function' and LoadResourceFile or rawget(_G, 'LoadResourceFile')
-local getCurrentResourceName = type(GetCurrentResourceName) == 'function' and GetCurrentResourceName or rawget(_G, 'GetCurrentResourceName')
 if type(loadResourceFile) == 'function' and type(getCurrentResourceName) == 'function' then
     local resourceName = getCurrentResourceName()
-    local source = loadResourceFile(resourceName, 'server/dev/s10_smoke.lua')
-    if type(source) == 'string' and type(load) == 'function' then
-        local chunk, loadError = load(source, ('@%s/server/dev/s10_smoke.lua'):format(resourceName), 't', _ENV)
-        if type(chunk) == 'function' then
-            local ok, runtimeError = pcall(chunk)
-            if not ok and type(print) == 'function' then
-                print(('[gnsh-nightshift] S10 smoke command loader failed: %s'):format(tostring(runtimeError):sub(1, 160)))
-            end
-        elseif type(print) == 'function' then
-            print(('[gnsh-nightshift] S10 smoke command loader failed: %s'):format(tostring(loadError):sub(1, 160)))
-        end
-    end
+    loadRuntimeScript('server/dev/s10_smoke.lua', 'S10 smoke command', resourceName)
 end
