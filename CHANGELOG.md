@@ -4,6 +4,172 @@ All notable changes to NightShift are documented here.
 
 ## [Unreleased]
 
+### S30 — Release Candidate, CI, Documentation & Packaging
+
+- **NS-300:** Added the root installation guide and the framework, provider,
+  worker-mode, client-mode, NPC travel, locations, phone, security, API, and
+  troubleshooting documentation pack. Normal installation only requires the
+  resource startup order; development smoke commands remain opt-in.
+- **NS-301:** Added a GitHub Actions quality gate for Lua contracts/syntax,
+  NUI lint and TypeScript/Vite build, release-builder tests, migration order,
+  locale fallback validation, and an optional Gitleaks scan.
+- **NS-302:** Added a source-preserving release builder that builds the NUI in
+  staging, omits tests/dev/cache/dependency/credential/CI metadata, writes a
+  SHA-256 manifest, normalizes archive metadata for reproducible ZIP output,
+  and rejects symlink traversal.
+- **NS-303:** Documented the open integration surface and the optional escrow
+  boundary; provider contracts, public exports, DTOs, configuration, and
+  migrations remain stable across release profiles.
+- **NS-304:** Added the fresh QBCore/Qbox/ESX/provider-minimal, upgrade, and
+  active-scheduled-booking restart evidence matrix. Local contracts are
+  automated; framework/database runtime captures remain an operator gate.
+
+### S29 — Framework Parity
+
+- **NS-290–NS-293:** Completed the QBCore, independent Qbox, ESX Legacy, and
+  provider-minimal parity contracts. Lifecycle callbacks normalize identity,
+  job, duty, and unload snapshots; Qbox multi-event registration rolls back on
+  failure, duplicate logout paths are deduplicated, and all subscribers receive
+  a stable unload snapshot.
+- Added framework matrix documents and regression coverage for reconnect,
+  player removal before logout, money/provider capability normalization, and
+  graceful optional-provider degradation. No migration is required.
+
+### S28 — OneSync & Performance
+
+- **NS-280–NS-284:** Added server-owned entity ownership policy, granular
+  replicated state-bag hints, bounded NPC streaming leases, TTL analytics
+  summary caching, and a load/profiler matrix. Physical admission is bounded
+  by source/district/global budgets and logical booking state remains
+  authoritative. No migration is required.
+
+### S27 — Security, Abuse & Concurrency
+
+- **NS-270–NS-273:** Added bounded security configuration, source/method
+  token-bucket rate limiting, opaque actor/booking/action tokens, replay and
+  revocation handling, and a permission-gated security status export.
+- Added abuse/race contracts and development smoke coverage. Token enforcement
+  is opt-in until every caller presents the new token.
+
+### S26 — Recovery & Restart Safety
+
+- **NS-260–NS-263:** Added bounded, policy-driven recovery for reserved,
+  arrived, scheduled, disconnected, and entity-loss bookings, with dry-run
+  defaults, idempotent cleanup, and a lifecycle-managed startup recovery job.
+- Recovery is observation-only by default and never claims settlement or
+  releases resources without an explicit server-side policy decision.
+
+### S25 — Public API, DTOs, Idempotency & Events
+
+- **NS-250–NS-252:** Added privacy-safe public booking/profile/marketplace DTOs
+  with nested allowlists, bounded pagination, and boundary validation.
+- **NS-253–NS-256:** Added persisted idempotency claims with replay, conflict,
+  expiry, bounded purge, and optimistic repository updates.
+- **NS-257–NS-259:** Added committed domain-event aliases and a read-only public
+  export surface with safe DTOs, health authority checks, and blocked external
+  writes.
+
+### S24 — Audit, Analytics & Diagnostics
+
+- **NS-240–NS-242:** Added typed, redacted, correlation-bound audit timelines;
+  bounded booking/price/conversion/demand/travel/settlement KPIs; and
+  permission-gated health, active/stuck, failure, and secret-redaction
+  diagnostics.
+- Queries are bounded and repository-controlled; diagnostics remain
+  observation-only.
+
+### S23 — Agencies, Venues & Settlement
+
+- **NS-230–NS-231:** Added agency administration, opt-in worker membership,
+  routing, and immutable commission snapshots.
+- **NS-232–NS-233:** Added venue profiles, room slots/capacity/opening checks,
+  desk guards, and idempotent settlement across worker, agency, and venue
+  ownership boundaries.
+
+### S22 — Housing, Motel, Hotel & Custom Location Providers
+
+- **NS-220–NS-223:** Added typed provider registries for motel/hotel rooms,
+  housing properties, configured locations, and custom integrations, with
+  access phases, capabilities, opening-hour/capacity checks, immutable calls,
+  guarded operations, and explicit unavailable fallbacks.
+- Added migration-free provider wiring, legacy aliases, and development smoke
+  coverage without requiring server.cfg edits.
+
+### S21 — Phone Providers & Standalone NUI
+
+- **NS-210:** Added the standalone NUI app lifecycle and callback surface for
+  deployments without a phone resource.
+- **NS-211–NS-212:** Added a capability-aware phone provider registry plus
+  generic, LB Phone, qs-smartphone, qb-phone, and YSeries adapters. Missing or
+  unsupported operations fail closed with typed unavailable results.
+
+### S20 — Demand, Heat & Vice
+
+- **NS-200–NS-202:** Added bounded per-player/district heat, configurable and
+  explainable vice risk, demand-to-heat feedback, pressure decay, clamped
+  pricing modifiers, and opt-in dispatch hooks.
+- Heat decay is one bounded scheduled job rather than a per-player or per-frame
+  loop; no migration is required.
+
+### S19 — Safety, Blacklist, Incidents & Dispute Evidence
+
+- **NS-190–NS-193:** Added idempotent active-booking safety actions, scoped
+  worker blacklists, allowlisted incident reporting, and an evidence-only
+  dispute read model. Provider failures are isolated from booking state.
+- Added migration 018, optional dispatch/security hooks, and bounded smoke
+  coverage; no manual server.cfg injection is required.
+
+### S18 — Scheduling, Conflict Policy & No-Show Processing
+
+- **NS-180–NS-182:** Added restart-safe scheduled bookings, buffered
+  worker/location conflict checks, bounded due-work activation, and an
+  idempotent no-show batch job with optional refund/deposit/reputation hooks.
+- Added migration 017 and validated scheduling configuration. Jobs use bounded
+  batches and system actors instead of per-booking timer threads.
+
+### S17 — Reputation, Reviews, Favorites, Relationships & Book Again
+
+- **NS-170–NS-174:** Added settled-booking reputation scoring, one-review
+  aggregates, persistent favorites, relationship/trust history, and fresh-quote
+  Book Again flows with replay-safe writes.
+- Added migrations 015–016, privacy-safe NUI routes, and development smoke
+  commands. Ratings and trust are server-derived and bounded.
+
+### S16 — Client Mode Vertical Slice
+
+- **NS-160–NS-161:** Added the critical client-mode release scenario and
+  COME_TO_ME/PICKUP/MEET_THERE regression matrix covering discovery, quote,
+  reservation, travel, arrival, session, settlement, history, and restart
+  replay. Live FXServer evidence remains a deployment gate.
+
+### S15 — Client Mode MEET_THERE
+
+- **NS-150–NS-152:** Added dual-side travel barriers, grace/no-show outcomes,
+  token-only appointment completion, and unified session/settlement recovery.
+  Both client and worker must pass server-side arrival checks before an
+  appointment starts.
+
+### S14 — Client Mode PICKUP
+
+- **NS-140–NS-143:** Added server-owned roadside pickup resolution, NPC
+  waiting/no-show handling, owner-only vehicle binding/entry, and two-leg
+  pickup progression through destination, session, and settlement.
+
+### S13 — Client Mode COME_TO_ME
+
+- **NS-130–NS-132:** Added atomic client-mode reservation, logical travel and
+  spawn/arrival orchestration, and a unified appointment/settlement retry flow
+  with ownership, quote, location, generation, and token validation.
+
+### S12 — Marketplace NUI & Client Booking Read Model
+
+- **NS-120–NS-123:** Added the typed NUI bridge and request IDs, Swiss-style
+  marketplace with safe loading/error/empty states, quote-bound booking
+  composer, and a privacy-safe client booking read model with bounded history
+  pagination.
+- Added quote/confirm and client-bookings:list callbacks, source-reuse guards,
+  identity-scoped idempotency, and atomic worker/location reservation checks.
+
 ### S11 — Worker Mode Negotiation & Vertical Slice
 
 - **NS-110:** Added immutable, server-authoritative NPC offer/counter negotiation
