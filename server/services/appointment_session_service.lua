@@ -200,7 +200,9 @@ function Service:start(actor, bookingId, request)
     local booking, bookingError = self:_booking(bookingId)
     if not booking then return bookingError end
     if tostring(booking.id) ~= tostring(bookingId) then return invalid('booking lookup returned a mismatched booking') end
-    if booking.workerType ~= 'PLAYER' or booking.workerRef ~= owner.ref then return Result.err(Codes.APPOINTMENT_SESSION_OWNER_MISMATCH, 'worker does not own this booking') end
+    local workerOwns = booking.workerType == 'PLAYER' and booking.workerRef == owner.ref
+    local clientOwns = booking.clientType == 'PLAYER' and booking.clientRef == owner.ref
+    if not workerOwns and not clientOwns then return Result.err(Codes.APPOINTMENT_SESSION_OWNER_MISMATCH, 'actor does not own this booking') end
     if booking.status ~= 'ARRIVED' then return Result.err(Codes.APPOINTMENT_SESSION_CONFLICT, 'appointment session requires an ARRIVED booking', { status = booking.status }) end
     local actorSession = self._byActor[owner.ref] and self._sessions[self._byActor[owner.ref]]
     if actorSession then
@@ -268,6 +270,35 @@ function Service:complete(actor, sessionToken, request)
     self:_remove(session)
     self._completed[nextSession.token] = copy(nextSession)
     return Result.ok({ session = nextSession, booking = completedBooking }, { completed = true, oneTime = true, serverAuthoritative = true })
+end
+
+function Service:interrupt(actor, sessionToken, reason)
+    if not self:isEnabled() then return invalid('appointment sessions are disabled') end
+    local owner, ownerError = actorValue(actor)
+    if not owner then return ownerError end
+    if not token(tostring(sessionToken or ''), 200) then return invalid('appointment session token is invalid') end
+    local session = self._sessions[tostring(sessionToken)]
+    if not session then
+        local completed = self._completed[tostring(sessionToken)]
+        if completed then return Result.ok({ session = copy(completed), booking = copy(completed.booking) }, { idempotent = true }) end
+        return Result.err(Codes.APPOINTMENT_SESSION_NOT_FOUND, 'appointment session was not found')
+    end
+    if session.actorRef ~= owner.ref or (session.actorSource and owner.source and session.actorSource ~= owner.source) then
+        return Result.err(Codes.APPOINTMENT_SESSION_OWNER_MISMATCH, 'appointment session belongs to another client')
+    end
+    local booking, bookingError = self:_booking(session.bookingId)
+    if not booking then return bookingError end
+    if booking.status ~= 'ACTIVE' and booking.status ~= 'ARRIVED' then
+        return Result.err(Codes.APPOINTMENT_SESSION_CONFLICT, 'appointment session cannot be interrupted in its current booking state', { status = booking.status })
+    end
+    local transitioned = self._bookingService:interrupt(owner, booking.id, booking.version, reason or 'client-disconnected')
+    local nextBooking, transitionError = unwrap(transitioned, Codes.APPOINTMENT_SESSION_INVALID)
+    if not nextBooking then return transitionError end
+    local nextSession = copy(session)
+    nextSession.state, nextSession.interruptedAt, nextSession.booking, nextSession.version = 'CANCELLED', now(self._clock), copy(nextBooking), session.version + 1
+    self:_remove(session)
+    self._completed[nextSession.token] = copy(nextSession)
+    return Result.ok({ session = nextSession, booking = nextBooking }, { interrupted = true, serverAuthoritative = true })
 end
 
 function Service:get(sessionToken)

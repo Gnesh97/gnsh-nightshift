@@ -245,6 +245,27 @@ function Service:get(workerKey)
     return workerError(Codes.NPC_WORKER_NOT_FOUND, 'NPC worker was not found', { workerKey = workerKey })
 end
 
+function Service:getByProfileId(profileId)
+    profileId = tonumber(profileId)
+    if not profileId or profileId < 1 or profileId ~= math.floor(profileId) then
+        return invalid('NPC worker profile ID is invalid')
+    end
+    if self._repository and type(self._repository.findWorkerByProfileId) == 'function' then
+        local result = self._repository:findWorkerByProfileId(profileId)
+        if type(result) == 'table' and result.ok then
+            local normalized, errorResult = normalizeWorker(result.value)
+            if not normalized then return errorResult end
+            self._workers[normalized.workerKey] = normalized
+            return Result.ok(copy(normalized))
+        end
+        if type(result) == 'table' and result.error and result.error.code ~= Codes.REPOSITORY_NOT_FOUND then return result end
+    end
+    for _, worker in pairs(self._workers) do
+        if tonumber(worker.profileId or worker.profile and worker.profile.id) == profileId then return Result.ok(copy(worker)) end
+    end
+    return workerError(Codes.NPC_WORKER_NOT_FOUND, 'NPC worker was not found', { profileId = profileId })
+end
+
 function Service:listAvailable(options)
     local limit, offset, pageError = parsePage(options, 100)
     if not limit then return pageError end

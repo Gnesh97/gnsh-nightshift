@@ -19,10 +19,10 @@ local function invoke(container, method, ...)
     local ok, fn = pcall(function() return container[method] end)
     if not ok then return nil end
     if type(fn) ~= 'function' then return nil end
-    ok, value = pcall(fn, container, ...)
-    if ok and value ~= nil then return value end
-    ok, value = pcall(fn, ...)
-    return ok and value or nil
+    local called, value = pcall(fn, container, ...)
+    if called and value ~= nil then return value end
+    called, value = pcall(fn, ...)
+    return called and value or nil
 end
 
 local function getCore(options)
@@ -51,11 +51,45 @@ local function member(container, key)
     return ok and value or nil
 end
 
+local function unregisterEvent(options, token)
+    if token == nil or token == false then return end
+    local remover = options.eventUnregistrar
+    if type(remover) == 'function' then
+        pcall(remover, token)
+        return
+    end
+    local removeEventHandler = rawget(_G, 'RemoveEventHandler')
+    if type(removeEventHandler) == 'function' then pcall(removeEventHandler, token) end
+end
+
 local function registerEvent(options, name, handler)
-    if type(options.eventRegistrar) == 'function' then return options.eventRegistrar(name, handler) end
-    local addEventHandler = rawget(_G, 'AddEventHandler')
-    if type(addEventHandler) == 'function' then return addEventHandler(name, handler) end
-    return false
+    local names = type(name) == 'table' and name or { name }
+    local tokens = {}
+    for _, eventName in ipairs(names) do
+        if type(eventName) == 'string' and eventName ~= '' then
+            local token
+            local registrar = options.eventRegistrar
+            if type(registrar) ~= 'function' then
+                local addEventHandler = rawget(_G, 'AddEventHandler')
+                if type(addEventHandler) == 'function' then registrar = addEventHandler end
+            end
+            if type(registrar) == 'function' then
+                local ok, value = pcall(registrar, eventName, handler)
+                if not ok then
+                    for _, registeredToken in ipairs(tokens) do unregisterEvent(options, registeredToken) end
+                    error(value, 0)
+                end
+                token = value
+            end
+            if token == nil or token == false then
+                for _, registeredToken in ipairs(tokens) do unregisterEvent(options, registeredToken) end
+                return false
+            end
+            tokens[#tokens + 1] = token or false
+        end
+    end
+    if #tokens == 1 then return tokens[1] end
+    return tokens
 end
 
 local function data(player)
@@ -77,9 +111,13 @@ local function normalizeEvent(adapter, kind, source, payload)
     if not source and type(payload) == 'table' and type(payload.PlayerData) == 'table' then
         source = tonumber(payload.PlayerData.source or payload.PlayerData.playerId)
     end
+    if not source then source = tonumber(rawget(_G, 'source')) end
     if not source then return nil end
     local result = adapter:getPlayer(source)
     local identity = result and result.ok and result.value or nil
+    if not identity and kind == 'unloaded' and type(adapter.getLastIdentity) == 'function' then
+        identity = adapter:getLastIdentity(source, false)
+    end
     if (kind == 'job' or kind == 'duty') and identity and type(payload) == 'table' then
         local current = copy(identity.job or {})
         current.name = payload.name or payload.label or current.name
@@ -89,6 +127,13 @@ local function normalizeEvent(adapter, kind, source, payload)
         if payload.onduty ~= nil then current.onDuty = payload.onduty end
         if payload.onDuty ~= nil then current.onDuty = payload.onDuty end
         identity.job = Types.job(current)
+    elseif kind == 'duty' and identity and type(payload) == 'boolean' then
+        local current = copy(identity.job or {})
+        current.onDuty = payload
+        identity.job = Types.job(current)
+    end
+    if kind == 'unloaded' and identity then
+        identity.loaded = false
     end
     return identity
 end
@@ -152,10 +197,16 @@ function Adapter.new(options)
             if value.onduty ~= nil then return value.onduty == true end
             return value.onDuty == true
         end,
-        onPlayerLoaded = function(handler) return registerEvent(options, events.loaded or 'QBCore:Server:OnPlayerLoaded', handler) end,
-        onPlayerUnloaded = function(handler) return registerEvent(options, events.unloaded or 'QBCore:Server:OnPlayerUnload', handler) end,
+        onPlayerLoaded = function(handler) return registerEvent(options, events.loaded or 'QBCore:Server:PlayerLoaded', handler) end,
+        onPlayerUnloaded = function(handler)
+            return registerEvent(options, events.unloaded or {
+                'QBCore:Server:OnPlayerUnload',
+                'qbx_core:server:playerLoggedOut',
+                'playerDropped'
+            }, handler)
+        end,
         onJobChanged = function(handler) return registerEvent(options, events.job or 'QBCore:Server:OnJobUpdate', handler) end,
-        onDutyChanged = function(handler) return registerEvent(options, events.duty or 'QBCore:Server:OnDutyUpdate', handler) end,
+        onDutyChanged = function(handler) return registerEvent(options, events.duty or 'QBCore:Server:SetDuty', handler) end,
         normalizeEvent = normalizeEvent
     })
     if not adapter then return nil, err end

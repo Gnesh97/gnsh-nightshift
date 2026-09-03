@@ -54,5 +54,25 @@ NightShift.Schemas = {
         opportunityKey = 'string', district = 'string', zone = 'string', state = 'enum',
         demandScore = 'bounded_number', demandBand = 'enum', createdAt = 'number', expiresAt = 'number'
     },
-    heat = { min = 'bounded_number', max = 'bounded_number', decay = 'bounded_number' }
+    heat = {
+        enabled = 'boolean', playerEnabled = 'boolean',
+        min = 'bounded_number', max = 'bounded_number',
+        playerIncrement = 'bounded_number', districtIncrement = 'bounded_number',
+        decayIntervalSeconds = 'positive_integer', playerDecay = 'bounded_number',
+        districtDecay = 'bounded_number', maxEventKeys = 'positive_integer',
+        eventIncrements = 'number_map', decay = 'bounded_number'
+    },
+    vice = {
+        enabled = 'boolean', riskThreshold = 'bounded_number',
+        dispatchThreshold = 'bounded_number', districtPressureWeight = 'bounded_number',
+        archetypeWeight = 'bounded_number', bookingWeight = 'bounded_number'
+    },
+    demandHeatFeedback = {
+        enabled = 'boolean', streetPressureThreshold = 'bounded_number',
+        streetOpportunityPenalty = 'bounded_number',
+        privateAvailabilityModifier = 'bounded_number',
+        pricingDemandWeight = 'bounded_number', pricingHeatWeight = 'bounded_number',
+        pricingOversupplyPenalty = 'bounded_number',
+        minMultiplier = 'bounded_number', maxMultiplier = 'bounded_number'
+    }
 }

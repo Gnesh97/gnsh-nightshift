@@ -277,6 +277,64 @@ function Service:active(bookingId)
     return Result.ok(output)
 end
 
+-- Reconcile persisted locks after a resource restart. In-memory reservations
+-- use the normal provider-aware release path; rows that were loaded from the
+-- database are closed with an optimistic update and the lock manager is
+-- released locally. Provider cleanup is reported as deferred because the
+-- persisted row intentionally stores no provider-specific type.
+function Service:recoverBooking(bookingId, options)
+    if not text(bookingId, 160) and tonumber(bookingId) == nil then
+        return invalid('location recovery booking ID is invalid')
+    end
+    options = options or {}
+    if type(options) ~= 'table' then return invalid('location recovery options must be a table') end
+    local id = tostring(bookingId)
+    local rows = {}
+    if type(self._repository) == 'table' and type(self._repository.findByBooking) == 'function' then
+        local found = self._repository:findByBooking(id)
+        if type(found) ~= 'table' or not found.ok then return found end
+        rows = found.value or {}
+    else
+        for _, reservation in pairs(self._active) do
+            if reservation.bookingId == id then rows[#rows + 1] = reservation:copy() end
+        end
+    end
+    local summary = { bookingId = id, scanned = #rows, released = 0, idempotent = 0, failed = 0, providerDeferred = 0, errors = {} }
+    for _, row in ipairs(rows) do
+        local key = row.reservationKey or row.activeKey
+        local active = row.status == 'RESERVED' or row.status == 'OCCUPIED'
+        if active and key then
+            local inMemory = self._active[key]
+            local released
+            if inMemory and type(self.release) == 'function' then
+                released = self:release(id, key)
+            elseif type(self._repository) == 'table' and type(self._repository.updateExpectedVersion) == 'function' and row.id then
+                released = self._repository:updateExpectedVersion(row.id, row.version, { status = options.status or 'RELEASED', activeKey = nil })
+                if type(self._locks.release) == 'function' then
+                    pcall(self._locks.release, self._locks, id, { { type = 'LOCATION', id = row.locationRef } })
+                end
+                summary.providerDeferred = summary.providerDeferred + 1
+            else
+                released = Result.ok({ idempotent = true, status = 'RELEASED' })
+            end
+            if type(released) == 'table' and released.ok then
+                if released.metadata and released.metadata.idempotent or released.value and released.value.idempotent then
+                    summary.idempotent = summary.idempotent + 1
+                else
+                    summary.released = summary.released + 1
+                end
+            else
+                summary.failed = summary.failed + 1
+                if #summary.errors < 20 then
+                    local errorValue = type(released) == 'table' and (released.error or released) or {}
+                    summary.errors[#summary.errors + 1] = { reservationKey = key, code = errorValue.code or Codes.RESERVATION_PROVIDER_FAILED, message = errorValue.message or 'location recovery failed' }
+                end
+            end
+        end
+    end
+    return Result.ok(summary, { recovered = summary.failed == 0 })
+end
+
 NightShift.LocationReservationService = Service
 NightShift.Services = NightShift.Services or {}
 NightShift.Services.LocationReservation = Service

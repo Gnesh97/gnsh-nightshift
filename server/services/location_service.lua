@@ -168,6 +168,12 @@ function Service:_providerLocation(source, locationType, locationRef, request)
     local validated = methodStyle and call(validate, provider, source, locationRef, copy(request)) or call(validate, source, locationRef, copy(request))
     local validation, validationError = unwrap(validated)
     if validationError then return nil, validationError end
+    if type(validation) == 'table' and validation.skipped == true then
+        return nil, errorResult(Codes.LOCATION_NOT_FOUND, 'location provider is unavailable', {
+            locationRef = locationRef,
+            provider = providerName
+        })
+    end
     if validated == nil or validation == nil or validated == false or validation == false or type(validation) == 'table' and validation.valid == false then
         return nil, errorResult(Codes.LOCATION_NOT_FOUND, 'location reference is not registered by the provider', { locationRef = locationRef })
     end
@@ -214,6 +220,12 @@ function Service:_validateRegisteredProvider(source, location, request)
         local validated = methodStyle and call(validate, provider, source, location.locationRef, copy(request)) or call(validate, source, location.locationRef, copy(request))
         local validation, validationError = unwrap(validated)
         if validationError then return validationError end
+        if type(validation) == 'table' and validation.skipped == true then
+            return errorResult(Codes.LOCATION_NOT_FOUND, 'location provider is unavailable', {
+                locationRef = location.locationRef,
+                provider = location.provider
+            })
+        end
         if validated == nil or validation == nil or validated == false or validation == false or type(validation) == 'table' and validation.valid == false then
             return errorResult(Codes.LOCATION_NOT_FOUND, 'provider rejected the registered location', { locationRef = location.locationRef })
         end
@@ -223,7 +235,17 @@ function Service:_validateRegisteredProvider(source, location, request)
         local targetValue, targetError = unwrap(resolved)
         if targetError then return targetError end
         local target = type(targetValue) == 'table' and (targetValue.worldTarget or targetValue.world_target or targetValue) or nil
-        if target ~= nil then location.worldTarget = target end
+        if target ~= nil then
+            local safeTarget = validateTarget(target)
+            if not safeTarget then
+                return errorResult(Codes.LOCATION_TARGET_INVALID, 'provider returned an unsafe world target', {
+                    locationRef = location.locationRef
+                })
+            end
+            local resolvedLocation = location:copy()
+            resolvedLocation.worldTarget = safeTarget
+            return true, resolvedLocation
+        end
     end
     return true
 end
@@ -252,8 +274,9 @@ function Service:resolve(source, request)
         if not providerLocation then return providerError end
         location = providerLocation
     else
-        local providerResult = self:_validateRegisteredProvider(source, location, request)
+        local providerResult, resolvedLocation = self:_validateRegisteredProvider(source, location, request)
         if providerResult ~= true then return providerResult end
+        if resolvedLocation then location = resolvedLocation end
     end
     if not location.available then return errorResult(Codes.LOCATION_UNAVAILABLE, 'location is not currently available', { locationRef = locationRef }) end
     local meetingMode = request.meetingMode or request.mode

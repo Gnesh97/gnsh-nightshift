@@ -91,6 +91,15 @@ local function developmentPayerResolver(booking, actor, request)
     return syntheticDevelopmentSource(reference, workerSource)
 end
 
+local function developmentPayeeResolver(booking, actor, request)
+    local requested = type(request) == 'table' and tonumber(request.payeeSource) or nil
+    if requested and requested >= 1 and math.floor(requested) == requested and requested ~= (actor and tonumber(actor.source) or nil) then
+        return requested
+    end
+    local reference = type(booking) == 'table' and (booking.workerRef or booking.workerProfileId or booking.workerProfileKey) or 'nightshift-npc'
+    return syntheticDevelopmentSource(reference, actor and tonumber(actor.source) or nil)
+end
+
 local defaultStages = {
     config = function(context, bootstrap)
         local options = bootstrap and bootstrap.options or {}
@@ -228,6 +237,14 @@ local defaultStages = {
         local location = options.locationRepository
         local locationReservation = options.locationReservationRepository
         local npcProfile = options.npcProfileRepository or options.npcProfilesRepository
+        local agency = options.agencyRepository
+        local review = options.reviewRepository
+        local favorite = options.favoriteRepository
+        local relationship = options.relationshipRepository
+        local blacklist = options.blacklistRepository
+        local audit = options.auditRepository
+        local analytics = options.analyticsRepository
+        local idempotency = options.idempotencyRepository or options.idempotency
         if type(context) == 'table' then
             worker = rawget(context, 'workerProfileRepository') or worker
             client = rawget(context, 'clientProfileRepository') or client
@@ -238,6 +255,14 @@ local defaultStages = {
             location = rawget(context, 'locationRepository') or location
             locationReservation = rawget(context, 'locationReservationRepository') or locationReservation
             npcProfile = rawget(context, 'npcProfileRepository') or rawget(context, 'npcProfilesRepository') or npcProfile
+            agency = rawget(context, 'agencyRepository') or agency
+            review = rawget(context, 'reviewRepository') or review
+            favorite = rawget(context, 'favoriteRepository') or favorite
+            relationship = rawget(context, 'relationshipRepository') or relationship
+            blacklist = rawget(context, 'blacklistRepository') or blacklist
+            audit = rawget(context, 'auditRepository') or audit
+            analytics = rawget(context, 'analyticsRepository') or analytics
+            idempotency = rawget(context, 'idempotencyRepository') or rawget(context, 'idempotency') or idempotency
         end
         if worker == nil and NightShift.Repositories and NightShift.Repositories.WorkerProfile then
             local created, err = NightShift.Repositories.WorkerProfile.new({ db = database })
@@ -284,6 +309,46 @@ local defaultStages = {
             if not created then return err end
             npcProfile = created
         end
+        if agency == nil and NightShift.Repositories and NightShift.Repositories.Agency then
+            local created, err = NightShift.Repositories.Agency.new({ db = database })
+            if not created then return err end
+            agency = created
+        end
+        if review == nil and NightShift.Repositories and NightShift.Repositories.Review then
+            local created, err = NightShift.Repositories.Review.new({ db = database })
+            if not created then return err end
+            review = created
+        end
+        if favorite == nil and NightShift.Repositories and NightShift.Repositories.Favorite then
+            local created, err = NightShift.Repositories.Favorite.new({ db = database })
+            if not created then return err end
+            favorite = created
+        end
+        if relationship == nil and NightShift.Repositories and NightShift.Repositories.Relationship then
+            local created, err = NightShift.Repositories.Relationship.new({ db = database })
+            if not created then return err end
+            relationship = created
+        end
+        if blacklist == nil and NightShift.Repositories and NightShift.Repositories.Blacklist then
+            local created, err = NightShift.Repositories.Blacklist.new({ db = database })
+            if not created then return err end
+            blacklist = created
+        end
+        if audit == nil and NightShift.Repositories and NightShift.Repositories.Audit then
+            local created, err = NightShift.Repositories.Audit.new({ db = database })
+            if not created then return err end
+            audit = created
+        end
+        if analytics == nil and NightShift.Repositories and NightShift.Repositories.Analytics then
+            local created, err = NightShift.Repositories.Analytics.new({ db = database })
+            if not created then return err end
+            analytics = created
+        end
+        if idempotency == nil and NightShift.Repositories and NightShift.Repositories.Idempotency then
+            local created, err = NightShift.Repositories.Idempotency.new({ db = database })
+            if not created then return err end
+            idempotency = created
+        end
         if type(worker) ~= 'table' or type(client) ~= 'table' or type(booking) ~= 'table' or type(bookingEvent) ~= 'table' then
             return NightShift.Result.err(NightShift.Errors.Codes.REPOSITORY_INVALID, 'profile/booking repositories are unavailable', { stage = 'repositories' })
         end
@@ -296,7 +361,15 @@ local defaultStages = {
             payment = payment,
             location = location,
             locationReservation = locationReservation,
-            npcProfile = npcProfile
+            npcProfile = npcProfile,
+            agency = agency,
+            review = review,
+            favorite = favorite,
+            relationship = relationship,
+            blacklist = blacklist,
+            audit = audit,
+            analytics = analytics,
+            idempotency = idempotency
         } }
     end,
     services = function(context, bootstrap)
@@ -310,9 +383,200 @@ local defaultStages = {
         local features = type(config.features) == 'table' and config.features or {}
         local framework = options.frameworkAdapter or providers.framework
         local money = options.moneyAdapter or options.money or providers.money
+        local auditService = options.auditService or options.audit
+        local analyticsService = options.analyticsService or options.analytics
+        local diagnosticsService = options.diagnosticsService or options.diagnostics
+        local idempotencyStore = options.idempotencyStore or options.idempotencyService or options.idempotency
+        local domainEvents = options.domainEvents or options.domainEventService
+        local recoveryService = options.recoveryService or options.recovery
+        local rateLimiter = options.rateLimiter or options.rateLimit
+        local actionTokens = options.actionTokenStore or options.actionTokens
+        local eventBus = options.eventBus
+        if eventBus == nil and NightShift.EventBus and type(NightShift.EventBus.new) == 'function' then
+            local eventClock = type(options.clock) == 'table' and type(options.clock.timestamp) == 'function' and options.clock or nil
+            local createdEventBus = NightShift.EventBus.new({ clock = eventClock, logger = options.logger })
+            if type(createdEventBus) == 'table' then eventBus = createdEventBus end
+        end
+        local summaryCache = options.summaryCache or options.analyticsCache
+        if summaryCache == nil and features.analytics ~= false and NightShift.SummaryCache then
+            local created, err = NightShift.SummaryCache.new({
+                config = config.analyticsCache or NightShift.AnalyticsCacheConfig,
+                clock = options.clock
+            })
+            if not created then return err end
+            summaryCache = created
+        end
         if type(context) == 'table' then framework = rawget(context, 'frameworkAdapter') or framework end
         if type(context) == 'table' then money = rawget(context, 'moneyAdapter') or rawget(context, 'money') or money end
         local databaseDeferred = repositoryResult.deferred == true
+        if auditService == nil and features.audit ~= false and NightShift.AuditService and repositories.audit then
+            local created, err = NightShift.AuditService.new({
+                repository = repositories.audit, clock = options.clock
+            })
+            if not created then return err end
+            auditService = created
+        end
+        if analyticsService == nil and features.analytics ~= false and NightShift.AnalyticsService and repositories.analytics then
+            local created, err = NightShift.AnalyticsService.new({
+                repository = repositories.analytics, clock = options.clock,
+                cache = summaryCache, eventBus = eventBus,
+                cacheEvents = options.analyticsCacheEvents
+            })
+            if not created then return err end
+            analyticsService = created
+        end
+        if idempotencyStore == nil and features.idempotency ~= false and NightShift.IdempotencyStore then
+            local created, err = NightShift.IdempotencyStore.new({
+                repository = repositories.idempotency,
+                clock = options.clock,
+                ttlSeconds = options.idempotencyTtlSeconds,
+                maxEntries = options.idempotencyMaxEntries
+            })
+            if not created then return err end
+            idempotencyStore = created
+        end
+        if domainEvents == nil and features.domainEvents ~= false and NightShift.DomainEvents and eventBus then
+            local created, err = NightShift.DomainEvents.new({
+                eventBus = eventBus,
+                native = options.domainEventsNative
+            })
+            if not created then return err end
+            local attached, attachError = created:attach()
+            if type(attached) ~= 'table' or attached.ok ~= true then return attachError or attached end
+            domainEvents = created
+        end
+        local securityConfig = config.security or NightShift.SecurityConfig or {}
+        if rateLimiter == nil and features.security ~= false and NightShift.RateLimiter then
+            local created, err = NightShift.RateLimiter.new({
+                config = securityConfig, clock = options.clock
+            })
+            if not created then
+                if securityConfig.enabled == true then return err end
+            else
+                rateLimiter = created
+            end
+        end
+        if actionTokens == nil and features.security ~= false and NightShift.ActionTokenStore then
+            local created, err = NightShift.ActionTokenStore.new({
+                config = securityConfig, clock = options.clock, audit = auditService
+            })
+            if not created then
+                if securityConfig.enabled == true then return err end
+            else
+                actionTokens = created
+            end
+        end
+        local phoneRegistry = options.phoneProviderRegistry or options.phoneRegistry
+        if phoneRegistry == nil and NightShift.Phone and NightShift.Phone.ProviderRegistry then
+            local created, err = NightShift.Phone.ProviderRegistry.new({
+                defaultProvider = options.phoneDefaultProvider,
+                providers = options.phoneProviders,
+                logger = options.logger
+            })
+            if not created then return err end
+            phoneRegistry = created
+        end
+        if type(options.phoneAdapters) == 'table' and NightShift.PhoneAdapters
+            and phoneRegistry and type(phoneRegistry.register) == 'function' then
+            for providerName, adapterOptions in pairs(options.phoneAdapters) do
+                local definition = NightShift.PhoneAdapters[providerName]
+                if type(definition) == 'table' and type(definition.new) == 'function' then
+                    local adapter, adapterError = definition.new(adapterOptions)
+                    if not adapter then
+                        if options.requirePhoneAdapters == true then return adapterError end
+                    else
+                        local registration = phoneRegistry:register(providerName, adapter, {
+                            resource = type(adapterOptions) == 'table' and adapterOptions.resource or nil
+                        })
+                        if type(registration) ~= 'table' or registration.ok ~= true then
+                            if options.requirePhoneAdapters == true then return registration end
+                        end
+                    end
+                elseif options.requirePhoneAdapters == true then
+                    return NightShift.Result.err(NightShift.Errors.Codes.PROVIDER_INVALID, 'phone adapter is not registered', { provider = providerName })
+                end
+            end
+        elseif type(options.phoneAdapters) == 'table' and options.requirePhoneAdapters == true then
+            return NightShift.Result.err(NightShift.Errors.Codes.PROVIDER_INVALID,
+                'phone provider registry cannot register adapters', { stage = 'services' })
+        end
+        -- Location providers are optional integrations.  Build their
+        -- registries here so LocationService receives one stable, typed
+        -- provider map regardless of which motel/housing resources are
+        -- installed on the server.
+        local optionalProviders = type(providers.optional) == 'table' and providers.optional or {}
+        local configLocationProvider = options.configLocationProvider or options.configLocationsProvider
+        if configLocationProvider == nil and NightShift.OptionalProviders
+            and NightShift.OptionalProviders.ConfigLocations then
+            local configuredLocations = options.configLocations
+            if configuredLocations == nil then configuredLocations = config.locations end
+            local created, err = NightShift.OptionalProviders.ConfigLocations.new({
+                locations = configuredLocations,
+                clock = options.clock,
+                accessCheck = options.configLocationAccessCheck or options.locationAccessCheck
+            })
+            if not created then return err end
+            configLocationProvider = created
+        end
+        local motelRegistry = options.motelProviderRegistry or options.motelRegistry
+        if motelRegistry == nil and NightShift.Motel and NightShift.Motel.ProviderRegistry then
+            local motelProviders = options.motelProviders
+            if type(motelProviders) ~= 'table' and optionalProviders.motel then
+                motelProviders = { motel = optionalProviders.motel }
+            end
+            local created, err = NightShift.Motel.ProviderRegistry.new({
+                defaultProvider = options.motelDefaultProvider,
+                providers = motelProviders,
+                logger = options.logger
+            })
+            if not created then return err end
+            motelRegistry = created
+        end
+        local housingRegistry = options.housingProviderRegistry or options.housingRegistry
+        if housingRegistry == nil and NightShift.Housing and NightShift.Housing.ProviderRegistry then
+            local housingProviders = options.housingProviders
+            if type(housingProviders) ~= 'table' and optionalProviders.housing then
+                housingProviders = { housing = optionalProviders.housing }
+            end
+            local created, err = NightShift.Housing.ProviderRegistry.new({
+                defaultProvider = options.housingDefaultProvider,
+                providers = housingProviders,
+                logger = options.logger
+            })
+            if not created then return err end
+            housingRegistry = created
+        end
+        local locationProviderApi = options.locationProviderApi or options.locationProviderAPI
+        if locationProviderApi == nil and NightShift.Server
+            and NightShift.Server.LocationProviderApi then
+            local created, err = NightShift.Server.LocationProviderApi.new({ logger = options.logger })
+            if not created then return err end
+            locationProviderApi = created
+        end
+        if locationProviderApi and type(options.customLocationProviders) == 'table'
+            and type(locationProviderApi.register) == 'function' then
+            for providerName, provider in pairs(options.customLocationProviders) do
+                if type(provider) == 'table' then
+                    local definition = {}
+                    for key, value in pairs(provider) do definition[key] = value end
+                    if definition.id == nil and definition.name == nil then definition.id = providerName end
+                    local registered = locationProviderApi:register(definition)
+                    if type(registered) ~= 'table' or registered.ok ~= true then
+                        if options.requireLocationProviders == true then return registered end
+                    end
+                elseif options.requireLocationProviders == true then
+                    return NightShift.Result.err(NightShift.Errors.Codes.PROVIDER_INVALID,
+                        'location provider must be a table', { provider = providerName })
+                end
+            end
+        end
+        if locationProviderApi and options.installLocationProviderApi ~= false
+            and type(locationProviderApi.installSurface) == 'function' then
+            local installed, installError = locationProviderApi:installSurface(options.locationProviderApiSurface)
+            if type(installed) ~= 'table' or installed.ok ~= true then
+                if options.requireLocationProviderApi == true then return installError or installed end
+            end
+        end
         local demandConfig = config.demand or config.demandConfig or NightShift.DemandConfig or {}
         local districtService = options.districtService or options.districts
         if districtService == nil and NightShift.DistrictService then
@@ -331,8 +595,72 @@ local defaultStages = {
             if not created then return err end
             workerAvailability = created
         end
+        local heatService = options.heatService or options.heat
+        if heatService == nil and features.heat ~= false and NightShift.HeatService then
+            local created, err = NightShift.HeatService.new({
+                config = config.heat or NightShift.HeatConfig,
+                clock = options.clock,
+                districtResolver = options.heatDistrictResolver or options.eventDistrictResolver
+            })
+            if not created then return err end
+            heatService = created
+        end
+        if heatService and eventBus and options.attachHeatEvents ~= false
+            and type(heatService.attach) == 'function' then
+            local attached, attachError = heatService:attach(eventBus, options.heatEventNames)
+            if type(attached) ~= 'table' or attached.ok ~= true then
+                if options.requireHeatEvents == true then return attachError or attached end
+            end
+        end
+        local feedbackService = options.demandHeatFeedbackService
+            or options.demandFeedbackService or options.demandHeatFeedback
+        if feedbackService == nil and features.demandHeatFeedback ~= false
+            and NightShift.DemandHeatFeedbackService then
+            local created, err = NightShift.DemandHeatFeedbackService.new({
+                config = config.demandHeatFeedback or config.demandFeedback
+                    or NightShift.DemandHeatFeedbackConfig,
+                heatService = heatService,
+                heatResolver = options.heatResolver,
+                clock = options.clock
+            })
+            if not created then return err end
+            feedbackService = created
+        end
+        local viceService = options.viceService or options.vice
+        if viceService == nil and features.vice == true and NightShift.ViceService then
+            local optionalProviders = type(providers.optional) == 'table' and providers.optional or {}
+            local dispatchProvider = options.viceDispatchProvider or options.dispatchProvider
+                or providers.dispatch or optionalProviders.dispatch
+            local created, err = NightShift.ViceService.new({
+                config = config.vice or NightShift.ViceConfig,
+                heatService = heatService,
+                districtPressureResolver = options.districtPressureResolver
+                    or options.vicePressureResolver,
+                archetypeResolver = options.viceArchetypeResolver,
+                dispatch = dispatchProvider,
+                clock = options.clock
+            })
+            if not created then return err end
+            viceService = created
+        end
         local demandService = options.demandService or options.demand
         if demandService == nil and NightShift.DemandService and districtService then
+            local heatResolver = options.heatResolver
+            if heatResolver == nil and heatService and type(heatService.get) == 'function' then
+                heatResolver = function(request, context)
+                    local district = type(context) == 'table' and context.district or nil
+                    district = type(district) == 'table' and district.id or district
+                    local result = heatService:get({
+                        playerKey = type(request) == 'table' and request.playerKey or nil,
+                        district = district,
+                        now = type(request) == 'table' and request.now or nil
+                    })
+                    if type(result) == 'table' and result.ok then
+                        return result.value and result.value.districtPressure or 0
+                    end
+                    return 0
+                end
+            end
             local created, err = NightShift.DemandService.new({
                 districtService = districtService,
                 availabilityService = workerAvailability,
@@ -342,9 +670,10 @@ local defaultStages = {
                 activeWorkersResolver = options.activeWorkersResolver,
                 recentActivityResolver = options.recentActivityResolver,
                 policePressureResolver = options.policePressureResolver,
-                heatResolver = options.heatResolver,
+                heatResolver = heatResolver,
                 eventResolver = options.demandEventResolver,
-                weatherResolver = options.demandWeatherResolver
+                weatherResolver = options.demandWeatherResolver,
+                feedbackService = feedbackService
             })
             if not created then return err end
             demandService = created
@@ -366,13 +695,88 @@ local defaultStages = {
             if not created then return err end
             vehicleLocation = created
         end
+        local locationProviders = {}
+        local explicitLocationProviders = type(options.locationProviders) == 'table'
+        local configuredProviderMap = options.locationProviders
+        if type(configuredProviderMap) ~= 'table' then
+            configuredProviderMap = type(providers.optional) == 'table' and providers.optional or providers
+        end
+        if type(configuredProviderMap) == 'table' then
+            for providerName, provider in pairs(configuredProviderMap) do
+                locationProviders[providerName] = provider
+            end
+        end
+        local function addLocationProvider(providerName, provider, replace)
+            if providerName and provider and (replace == true or locationProviders[providerName] == nil) then
+                locationProviders[providerName] = provider
+            end
+        end
+        local function registryHasProvider(registry)
+            if type(registry) ~= 'table' or type(registry.list) ~= 'function' then return registry ~= nil end
+            local listed = registry:list()
+            return type(listed) == 'table' and listed.ok == true
+                and type(listed.value) == 'table' and #listed.value > 0
+        end
+        if registryHasProvider(motelRegistry) then
+            addLocationProvider('motel', motelRegistry, not explicitLocationProviders)
+        end
+        if registryHasProvider(housingRegistry) then
+            addLocationProvider('housing', housingRegistry, not explicitLocationProviders)
+        end
+        -- Config locations participate in the same validation/reservation
+        -- lifecycle as optional providers.  This keeps opening hours, access,
+        -- and provider-side holds authoritative even with no external
+        -- housing resource installed.
+        if configLocationProvider then
+            addLocationProvider('config', configLocationProvider, not explicitLocationProviders)
+        end
+        if locationProviderApi and type(locationProviderApi.getProviderMap) == 'function' then
+            local customMap = locationProviderApi:getProviderMap()
+            if type(customMap) == 'table' then
+                for providerName, provider in pairs(customMap) do
+                    addLocationProvider(providerName, provider)
+                end
+            end
+        end
+        local locationDefinitions = config.locations
+        if type(options.configLocations) == 'table' and options.configLocations ~= config.locations then
+            local merged = {}
+            local seen = {}
+            for _, location in ipairs(config.locations or {}) do
+                local id = type(location) == 'table' and (location.id or location.locationRef)
+                if id == nil or not seen[id] then
+                    merged[#merged + 1] = location
+                    if id ~= nil then seen[id] = true end
+                end
+            end
+            for _, location in ipairs(options.configLocations) do
+                local id = type(location) == 'table' and (location.id or location.locationRef)
+                if id == nil or not seen[id] then
+                    merged[#merged + 1] = location
+                    if id ~= nil then seen[id] = true end
+                end
+            end
+            locationDefinitions = merged
+        end
+        local typedDefinitions = {}
+        for index, location in ipairs(locationDefinitions or {}) do
+            local definition = location
+            local locationType = type(location) == 'table'
+                and tostring(location.locationType or location.type or ''):upper() or ''
+            if locationType == 'CONFIG_LOCATION' and type(location) == 'table'
+                and location.provider == nil then
+                definition = copyValue(location)
+                definition.provider = 'config'
+            end
+            typedDefinitions[index] = definition
+        end
+        locationDefinitions = typedDefinitions
         local locationService = options.locationService
         if locationService == nil and NightShift.LocationService then
-            local locationProviders = providers.optional or providers
             local created, err = NightShift.LocationService.new({
-                locations = config.locations,
+                locations = locationDefinitions,
                 repository = repositories.location,
-                providers = options.locationProviders or locationProviders,
+                providers = locationProviders,
                 clock = options.clock,
                 accessCheck = options.locationAccessCheck,
                 zoneCheck = options.locationZoneCheck,
@@ -383,6 +787,13 @@ local defaultStages = {
             })
             if not created then return err end
             locationService = created
+        end
+        if locationProviderApi and locationService
+            and type(locationProviderApi.attachLocationService) == 'function' then
+            local attached, attachError = locationProviderApi:attachLocationService(locationService)
+            if type(attached) ~= 'table' or attached.ok ~= true then
+                if options.requireLocationProviderApi == true then return attachError or attached end
+            end
         end
         local locationReservation = options.locationReservationService
         if locationReservation == nil and locationService and NightShift.LocationReservationService then
@@ -396,12 +807,32 @@ local defaultStages = {
                 locationService = locationService,
                 repository = repositories.locationReservation,
                 locks = locks,
-                providers = options.locationProviders or providers.optional or providers,
+                providers = locationProviders,
                 clock = options.clock,
                 defaultTtl = options.locationReservationTtl
             })
             if not created then return err end
             locationReservation = created
+        end
+        local pickupLocation = options.pickupLocationService or options.pickupLocation
+        local pickupVehicle = options.pickupVehicleService or options.pickupVehicle
+        local pickupMode = options.pickupModeService or options.pickupMode
+        local dualTravel = options.dualTravelService or options.dualTravel
+        if pickupLocation == nil and NightShift.PickupLocationService then
+            local created, err = NightShift.PickupLocationService.new({
+                candidates = config.pickupLocations or NightShift.PickupLocationConfig,
+                locationService = locationService,
+                locationReservationService = locationReservation,
+                bookingLookup = options.pickupBookingLookup,
+                routeCheck = options.pickupRouteCheck or options.pickupNavigationCheck,
+                blockedZoneCheck = options.pickupBlockedZoneCheck or options.pickupZoneCheck,
+                minDistance = options.pickupMinimumDistance,
+                maxDistance = options.pickupMaximumDistance,
+                reservationTtlSeconds = options.pickupReservationTtlSeconds,
+                clock = options.clock
+            })
+            if not created then return err end
+            pickupLocation = created
         end
         local npcProfileGenerator = options.npcProfileGenerator or options.npcGenerator
         if npcProfileGenerator == nil and NightShift.NpcProfileGenerator then
@@ -441,6 +872,37 @@ local defaultStages = {
             marketplace = created
         end
         local streamingConfig = config.npcStreaming or NightShift.NpcStreamingConfig or {}
+        local networkConfig = type(config.network) == 'table' and config.network or {}
+        local npcStreamingBudget = options.npcStreamingBudgetService or options.npcStreamingBudget
+        if npcStreamingBudget == nil and NightShift.NpcStreamingBudgetService then
+            local budgetConfig = type(streamingConfig.budget) == 'table' and streamingConfig.budget or {}
+            local created, err = NightShift.NpcStreamingBudgetService.new({
+                clock = options.clock,
+                config = budgetConfig
+            })
+            if not created then return err end
+            npcStreamingBudget = created
+        end
+        local entityOwnershipPolicy = options.entityOwnershipPolicy or options.entityOwnership
+        if entityOwnershipPolicy == nil and NightShift.EntityOwnershipPolicy then
+            local ownershipConfig = options.entityOwnershipConfig
+                or networkConfig.entityOwnership or networkConfig.ownership
+            local created, err = NightShift.EntityOwnershipPolicy.new({ config = ownershipConfig })
+            if not created then return err end
+            entityOwnershipPolicy = created
+        end
+        local stateBagPolicy = options.stateBagPolicy or options.stateBags
+        if stateBagPolicy == nil and NightShift.StateBagPolicy then
+            local stateConfig = options.stateBagConfig
+                or networkConfig.stateBag or networkConfig.stateBags
+            local created, err = NightShift.StateBagPolicy.new({
+                config = stateConfig,
+                setState = options.setEntityState,
+                getState = options.getEntityState
+            })
+            if not created then return err end
+            stateBagPolicy = created
+        end
         local npcTravel = options.npcTravelService or options.npcTravel
         if npcTravel == nil and NightShift.NpcTravelService then
             local created, err = NightShift.NpcTravelService.new({
@@ -454,7 +916,10 @@ local defaultStages = {
         end
         local npcEntityRegistry = options.npcEntityRegistry or options.npcEntityService
         if npcEntityRegistry == nil and NightShift.NpcEntityRegistry then
-            local created, err = NightShift.NpcEntityRegistry.new({ clock = options.clock })
+            local created, err = NightShift.NpcEntityRegistry.new({
+                clock = options.clock,
+                ownershipPolicy = entityOwnershipPolicy
+            })
             if not created then return err end
             npcEntityRegistry = created
         end
@@ -467,6 +932,8 @@ local defaultStages = {
                 clock = options.clock,
                 config = streamingConfig,
                 modelAllowlist = options.npcModelAllowlist or streamingConfig.modelAllowlist,
+                streamingBudget = npcStreamingBudget,
+                stateBagPolicy = stateBagPolicy,
                 modelResolver = options.npcModelResolver,
                 safeSpawnResolver = options.npcSafeSpawnResolver,
                 appearanceResolver = options.npcAppearanceResolver,
@@ -507,9 +974,21 @@ local defaultStages = {
         if framework == nil or databaseDeferred then
             return { ok = true, deferred = true, reason = framework == nil and 'framework adapter not configured' or 'profile repositories deferred', services = {
                 location = locationService, locationReservation = locationReservation, vehicleLocation = vehicleLocation,
+                locationProviders = locationProviders, configLocations = configLocationProvider,
+                motelProviders = motelRegistry, housingProviders = housingRegistry,
+                locationProviderApi = locationProviderApi,
+                pickupLocation = pickupLocation, pickupVehicle = pickupVehicle, pickupMode = pickupMode, dualTravel = dualTravel,
                 npcProfileGenerator = npcProfileGenerator, npcWorker = npcWorker, marketplace = marketplace,
                 npcTravel = npcTravel, npcEntityRegistry = npcEntityRegistry, npcSpawn = npcSpawn, npcArrival = npcArrival,
-                district = districtService, demand = demandService, workerAvailability = workerAvailability, npcCustomer = npcCustomer
+                npcStreamingBudget = npcStreamingBudget, entityOwnershipPolicy = entityOwnershipPolicy,
+                stateBagPolicy = stateBagPolicy,
+                district = districtService, demand = demandService, workerAvailability = workerAvailability, npcCustomer = npcCustomer,
+                 heat = heatService, demandHeatFeedback = feedbackService, vice = viceService,
+                 eventBus = eventBus, summaryCache = summaryCache, phone = phoneRegistry,
+                 agency = agencyService, agencyBooking = agencyBookingService, venue = venueService,
+                 audit = auditService, analytics = analyticsService, diagnostics = diagnosticsService,
+                 idempotency = idempotencyStore, domainEvents = domainEvents, recovery = recoveryService,
+                 rateLimiter = rateLimiter, actionTokens = actionTokens
             } }
         end
         local catalog = options.serviceCatalog
@@ -520,7 +999,45 @@ local defaultStages = {
         end
         local pricing = options.pricingService
         if pricing == nil and features.pricing ~= false and NightShift.PricingService then
-            local created, err = NightShift.PricingService.new({ catalog = catalog, config = config.pricing, clock = options.clock })
+            local pricingDemandResolver = options.pricingDemandResolver
+            if pricingDemandResolver == nil and demandService and type(demandService.evaluate) == 'function' then
+                pricingDemandResolver = function(request)
+                    local evaluated = demandService:evaluate(request)
+                    if type(evaluated) == 'table' and evaluated.ok == true and type(evaluated.value) == 'table' then
+                        return evaluated.value.score or evaluated.value.demandScore
+                    end
+                    return nil
+                end
+            end
+            local pricingModifierResolver = options.pricingModifierResolver
+            if pricingModifierResolver == nil and feedbackService and type(feedbackService.apply) == 'function' then
+                pricingModifierResolver = function(request)
+                    local demandValue
+                    if demandService and type(demandService.evaluate) == 'function' then
+                        local evaluated = demandService:evaluate(request)
+                        if type(evaluated) == 'table' and evaluated.ok == true then demandValue = evaluated.value end
+                    end
+                    local feedbackRequest = copyValue(request)
+                    if type(demandValue) == 'table' then
+                        feedbackRequest.district = feedbackRequest.district or demandValue.district
+                        feedbackRequest.demandScore = feedbackRequest.demandScore or demandValue.score or demandValue.demandScore
+                        local inputs = type(demandValue.inputs) == 'table' and demandValue.inputs or {}
+                        feedbackRequest.heat = feedbackRequest.heat or inputs.heat
+                        feedbackRequest.activeWorkers = feedbackRequest.activeWorkers or inputs.activeWorkers
+                        feedbackRequest.supplyCapacity = feedbackRequest.supplyCapacity or inputs.supplyCapacity
+                    end
+                    local applied = feedbackService:apply(feedbackRequest)
+                    if type(applied) == 'table' and applied.ok == true and type(applied.value) == 'table' then
+                        return applied.value.pricingModifier
+                    end
+                    return nil
+                end
+            end
+            local created, err = NightShift.PricingService.new({
+                catalog = catalog, config = config.pricing, clock = options.clock,
+                demandResolver = pricingDemandResolver,
+                pricingModifierResolver = pricingModifierResolver
+            })
             if not created then return err end
             pricing = created
         end
@@ -544,6 +1061,9 @@ local defaultStages = {
         end
         local settlement = options.settlementService
         local refund = options.refundService
+        local agencyService = options.agencyService or options.agency
+        local agencyBookingService = options.agencyBookingService or options.agencyBooking
+        local venueService = options.venueService or options.venue
         local identity = options.identityService
         if identity == nil and NightShift.IdentityService then
             local created, err = NightShift.IdentityService.new({ framework = framework })
@@ -582,19 +1102,64 @@ local defaultStages = {
                 identityService = identity,
                 config = options.permissionConfig,
                 aceChecker = options.aceChecker,
-                provider = options.permissionProvider
+                provider = options.permissionProvider,
+                auditService = auditService
             })
             if not created then return err end
             permissions = created
         end
+        if diagnosticsService == nil and features.diagnostics ~= false and NightShift.DiagnosticsService then
+            local adminCheck = options.diagnosticsAdminCheck
+            if adminCheck == nil and permissions and type(permissions.isAllowed) == 'function' then
+                adminCheck = function(source)
+                    return tonumber(source) == 0 or permissions:isAllowed(source, 'admin.manage') == true
+                end
+            end
+            local dbStage = bootstrap and bootstrap.results and bootstrap.results.db or {}
+            local database = dbStage.database or dbStage.value and dbStage.value.database
+            local created, err = NightShift.DiagnosticsService.new({
+                database = database,
+                bookingRepository = repositories.booking,
+                paymentRepository = repositories.payment,
+                locationReservationRepository = repositories.locationReservation,
+                analyticsService = analyticsService,
+                auditService = auditService,
+                providers = adapterResult.capabilities or providers,
+                adminCheck = adminCheck
+            })
+            if not created then return err end
+            diagnosticsService = created
+        end
         if not identity or not worker or not client or not permissions then
             return { ok = true, deferred = true, reason = 'identity/profile services unavailable', services = {
                 location = locationService, locationReservation = locationReservation, vehicleLocation = vehicleLocation,
-                npcProfileGenerator = npcProfileGenerator, npcWorker = npcWorker, marketplace = marketplace,
-                npcTravel = npcTravel, npcEntityRegistry = npcEntityRegistry, npcSpawn = npcSpawn, npcArrival = npcArrival,
-                district = districtService, demand = demandService, workerAvailability = workerAvailability, npcCustomer = npcCustomer
+                locationProviders = locationProviders, configLocations = configLocationProvider,
+                motelProviders = motelRegistry, housingProviders = housingRegistry,
+                locationProviderApi = locationProviderApi,
+                pickupLocation = pickupLocation, pickupVehicle = pickupVehicle, pickupMode = pickupMode, dualTravel = dualTravel,
+                 npcProfileGenerator = npcProfileGenerator, npcWorker = npcWorker, marketplace = marketplace,
+                 npcTravel = npcTravel, npcEntityRegistry = npcEntityRegistry, npcSpawn = npcSpawn, npcArrival = npcArrival,
+                 npcStreamingBudget = npcStreamingBudget, entityOwnershipPolicy = entityOwnershipPolicy,
+                 stateBagPolicy = stateBagPolicy,
+                 district = districtService, demand = demandService, workerAvailability = workerAvailability, npcCustomer = npcCustomer,
+                 heat = heatService, demandHeatFeedback = feedbackService, vice = viceService,
+                 phone = phoneRegistry,
+                 agency = agencyService, agencyBooking = agencyBookingService, venue = venueService,
+                  audit = auditService, analytics = analyticsService, diagnostics = diagnosticsService,
+                  idempotency = idempotencyStore, domainEvents = domainEvents, recovery = recoveryService,
+                  rateLimiter = rateLimiter, actionTokens = actionTokens
             } }
         end
+        local blacklistService = options.blacklistService
+        if blacklistService == nil and NightShift.BlacklistService and repositories.blacklist and identity then
+            local created, err = NightShift.BlacklistService.new({
+                repository = repositories.blacklist, identityService = identity,
+                agencyResolver = options.blacklistAgencyResolver
+            })
+            if not created then return err end
+            blacklistService = created
+        end
+        if marketplace and blacklistService and marketplace._blacklist == nil then marketplace._blacklist = blacklistService end
         local bookingTimeline = options.bookingTimelineService
         if bookingTimeline == nil and NightShift.BookingTimelineService and repositories.bookingEvent then
             local created, err = NightShift.BookingTimelineService.new({ repository = repositories.bookingEvent, clock = options.clock })
@@ -610,6 +1175,16 @@ local defaultStages = {
             reservationService = created
         end
         local booking = options.bookingService
+        local scheduleConflict = options.scheduleConflictService or options.scheduleConflict
+        if scheduleConflict == nil and NightShift.ScheduleConflictService and repositories.booking then
+            local created, err = NightShift.ScheduleConflictService.new({
+                repository = repositories.booking,
+                config = config.scheduling or NightShift.SchedulingConfig,
+                clock = options.clock
+            })
+            if not created then return err end
+            scheduleConflict = created
+        end
         if booking == nil and NightShift.BookingService and repositories.booking and bookingTimeline then
             local created, err = NightShift.BookingService.new({
                 repository = repositories.booking,
@@ -619,14 +1194,157 @@ local defaultStages = {
                 catalogResolver = options.catalogResolver or catalog,
                 quoteResolver = options.quoteResolver or pricing,
                 locationResolver = locationService,
-                clock = options.clock
+                eventBus = eventBus,
+                districtResolver = options.bookingDistrictResolver or options.eventDistrictResolver,
+                clock = options.clock,
+                scheduleConflictService = scheduleConflict
             })
             if not created then return err end
             booking = created
         end
+        if agencyService == nil and features.agencies ~= false and NightShift.AgencyService
+            and repositories.agency then
+            local adminCheck = options.agencyAdminCheck
+            if adminCheck == nil and permissions and type(permissions.isAllowed) == 'function' then
+                adminCheck = function(source)
+                    if tonumber(source) == 0 then return true end
+                    return permissions:isAllowed(source, 'agency.manage') == true
+                end
+            end
+            local created, err = NightShift.AgencyService.new({
+                repository = repositories.agency,
+                adminCheck = adminCheck
+            })
+            if not created then return err end
+            agencyService = created
+        end
+        if venueService == nil and features.venues ~= false and NightShift.VenueService then
+            local venueAdminCheck = options.venueAdminCheck
+            if venueAdminCheck == nil and permissions and type(permissions.isAllowed) == 'function' then
+                venueAdminCheck = function(source)
+                    if tonumber(source) == 0 then return true end
+                    return permissions:isAllowed(source, 'venue.manage') == true
+                end
+            end
+            local created, err = NightShift.VenueService.new({
+                repository = options.venueRepository or repositories.venue,
+                venues = options.venues or config.venues or NightShift.VenueConfig,
+                clock = options.clock,
+                adminCheck = venueAdminCheck,
+                auditService = auditService
+            })
+            if not created then return err end
+            venueService = created
+        end
+        if agencyBookingService == nil and features.agencies ~= false
+            and NightShift.AgencyBookingService and agencyService and booking then
+            local created, err = NightShift.AgencyBookingService.new({
+                agencyService = agencyService,
+                bookingService = booking,
+                workerAvailabilityService = workerAvailability
+            })
+            if not created then return err end
+            agencyBookingService = created
+        end
+        local incidentService = options.incidentService or options.incident
+        if incidentService == nil and features.incidents ~= false and NightShift.IncidentService and repositories.booking and bookingTimeline then
+            local created, err = NightShift.IncidentService.new({
+                repository = repositories.booking,
+                timelineService = bookingTimeline,
+                eventBus = eventBus,
+                clock = options.clock
+            })
+            if not created then return err end
+            incidentService = created
+        end
+        local disputeService = options.disputeService or options.dispute
+        if disputeService == nil and features.disputes ~= false and NightShift.DisputeService and repositories.booking and bookingTimeline then
+            local created, err = NightShift.DisputeService.new({
+                repository = repositories.booking,
+                timelineService = bookingTimeline,
+                paymentResolver = options.disputePaymentResolver or options.paymentStateResolver,
+                paymentService = options.disputePaymentService
+            })
+            if not created then return err end
+            disputeService = created
+        end
+        local safetyService = options.safetyService or options.safety
+        if safetyService == nil and features.safety ~= false and NightShift.SafetyService and booking then
+            local optionalProviders = type(providers.optional) == 'table' and providers.optional or {}
+            local dispatchProvider = options.safetyDispatchProvider or options.dispatchProvider or providers.dispatch or optionalProviders.dispatch
+            local securityProvider = options.safetySecurityProvider or options.securityProvider or providers.security or optionalProviders.security
+            local created, err = NightShift.SafetyService.new({
+                bookingService = booking,
+                dispatch = dispatchProvider,
+                security = securityProvider,
+                clock = options.clock,
+                checkInIntervalSeconds = options.safetyCheckInIntervalSeconds
+            })
+            if not created then return err end
+            safetyService = created
+        end
+        if vehicleLocation and vehicleLocation._bookingLookup == nil and booking and type(booking.get) == 'function' then
+            vehicleLocation._bookingLookup = function(bookingId)
+                local value = booking:get(bookingId)
+                if type(value) == 'table' and value.ok ~= nil then return value.ok and value.value or nil end
+                return value
+            end
+        end
+        local pickupVehicleResolver = options.pickupVehicleResolver or vehicleLocation
+        if pickupVehicle == nil and NightShift.PickupVehicleService and booking and pickupVehicleResolver then
+            local created, err = NightShift.PickupVehicleService.new({
+                bookingService = booking,
+                identityService = identity,
+                vehicleLocationService = pickupVehicleResolver,
+                seatCheck = options.pickupSeatCheck or options.vehicleSeatCheck,
+                npcNearby = options.pickupNpcNearby or options.vehicleNpcNearby,
+                accessCheck = options.pickupVehicleAccessCheck,
+                allowVehicleChange = options.pickupAllowVehicleChange == true,
+                onEnter = options.pickupVehicleOnEnter,
+                clock = options.clock
+            })
+            if not created then return err end
+            pickupVehicle = created
+        end
+        local clientBooking = options.clientBookingQueryService or options.clientBookingQuery
+        if clientBooking == nil and NightShift.ClientBookingQueryService and repositories.booking and identity then
+            local created, err = NightShift.ClientBookingQueryService.new({
+                repository = repositories.booking,
+                identityService = identity,
+                clientProfileService = client,
+                workerService = npcWorker,
+                maxPageSize = options.clientBookingMaxPageSize,
+                etaResolver = options.clientBookingEtaResolver,
+                clock = options.clock
+            })
+            if not created then return err end
+            clientBooking = created
+        end
+        local clientBookingCommands = options.clientBookingCommandService or options.clientBookingCommands
+        if clientBookingCommands == nil and NightShift.ClientBookingCommandService and repositories.booking and booking and pricing and identity and npcWorker and reservationService then
+            local created, err = NightShift.ClientBookingCommandService.new({
+                repository = repositories.booking,
+                bookingService = booking,
+                pricingService = pricing,
+                identityService = identity,
+                workerService = npcWorker,
+                reservationService = reservationService,
+                reservationTtlSeconds = options.clientBookingReservationTtlSeconds,
+                quoteWindowSeconds = options.clientBookingQuoteWindowSeconds or pricing and pricing._config and pricing._config.quoteTtlSeconds,
+                clock = options.clock
+            })
+            if not created then return err end
+            clientBookingCommands = created
+        end
         if settlement == nil and features.payments == true and moneyAvailable and NightShift.SettlementService and repositories.payment then
             local paymentConfig = config.payment or config.payments or { enabled = true, account = 'cash' }
-            local created, err = NightShift.SettlementService.new({ repository = repositories.payment, money = money, bookingService = booking, config = paymentConfig, clock = options.clock, depositService = deposit })
+            local created, err = NightShift.SettlementService.new({
+                repository = repositories.payment, money = money, bookingService = booking,
+                config = paymentConfig, clock = options.clock, depositService = deposit,
+                commissionSplitResolver = options.commissionSplitResolver or options.settlementSplitResolver,
+                commissionHook = options.commissionHook or options.commissionResolver,
+                timelineService = bookingTimeline, auditService = auditService
+            })
             if not created then return err end
             settlement = created
         end
@@ -639,15 +1357,24 @@ local defaultStages = {
                 bookingService = booking,
                 config = { enabled = true, account = 'virtual' },
                 payerResolver = developmentPayerResolver,
+                payeeResolver = developmentPayeeResolver,
                 clock = options.clock,
-                depositService = deposit
+                depositService = deposit,
+                commissionSplitResolver = options.commissionSplitResolver or options.settlementSplitResolver,
+                commissionHook = options.commissionHook or options.commissionResolver,
+                timelineService = bookingTimeline,
+                auditService = auditService
             })
             if not created then return err end
             settlement = created
             if type(print) == 'function' then print('[gnsh-nightshift] development settlement enabled (dry-run; no money effects)') end
         end
         if refund == nil and features.refunds ~= false and moneyAvailable and NightShift.RefundService and repositories.payment then
-            local created, err = NightShift.RefundService.new({ repository = repositories.payment, money = money, bookingService = booking, config = config.cancellation, clock = options.clock, depositService = deposit })
+            local created, err = NightShift.RefundService.new({
+                repository = repositories.payment, money = money, bookingService = booking,
+                config = config.cancellation, clock = options.clock, depositService = deposit,
+                auditService = auditService
+            })
             if not created then return err end
             refund = created
         end
@@ -664,6 +1391,56 @@ local defaultStages = {
             })
             if not created then return err end
             appointmentSession = created
+        end
+        if pickupMode == nil and NightShift.PickupModeService and booking and repositories.booking and identity and npcWorker and pickupLocation and pickupVehicle then
+            local created, err = NightShift.PickupModeService.new({
+                bookingService = booking,
+                repository = repositories.booking,
+                identityService = identity,
+                workerService = npcWorker,
+                locationService = locationService,
+                locationReservationService = locationReservation,
+                pickupLocationService = pickupLocation,
+                pickupVehicleService = pickupVehicle,
+                depositService = deposit,
+                travelService = npcTravel,
+                spawnService = npcSpawn,
+                arrivalService = npcArrival,
+                entityRegistry = npcEntityRegistry,
+                appointmentSessionService = appointmentSession,
+                settlementService = settlement,
+                reservationTtlSeconds = options.pickupReservationTtlSeconds or options.clientModeReservationTtlSeconds or options.clientBookingReservationTtlSeconds,
+                travelMode = options.pickupTravelMode or options.clientModeTravelMode,
+                originResolver = options.pickupOriginResolver,
+                clock = options.clock
+            })
+            if not created then return err end
+            pickupMode = created
+        end
+        if dualTravel == nil and NightShift.DualTravelService and booking and repositories.booking and identity and npcWorker and locationService and locationReservation then
+            local proximity = options.dualClientProximityCheck or options.meetThereProximityCheck
+            if proximity == nil and appointmentSession and type(appointmentSession._verifyLocation) == 'function' then
+                proximity = function(playerSource, currentBooking, _, payload)
+                    local actor = { type = 'PLAYER', ref = currentBooking.clientRef, source = playerSource }
+                    local request = { locationType = currentBooking.locationType, locationRef = currentBooking.locationRef, position = payload and payload.position }
+                    local ok = appointmentSession:_verifyLocation(actor, currentBooking, request)
+                    return ok == true
+                end
+            end
+            local created, err = NightShift.DualTravelService.new({
+                bookingService = booking, repository = repositories.booking, identityService = identity,
+                workerService = npcWorker, locationService = locationService,
+                locationReservationService = locationReservation, depositService = deposit,
+                refundService = refund, travelService = npcTravel, spawnService = npcSpawn,
+                arrivalService = npcArrival, appointmentSessionService = appointmentSession,
+                settlementService = settlement, clientProximityCheck = proximity,
+                gracePeriodSeconds = options.dualGracePeriodSeconds or options.meetThereGracePeriodSeconds,
+                reservationTtlSeconds = options.dualReservationTtlSeconds or options.clientModeReservationTtlSeconds,
+                travelMode = options.dualTravelMode or options.clientModeTravelMode,
+                originResolver = options.dualOriginResolver or options.meetThereOriginResolver, clock = options.clock
+            })
+            if not created then return err end
+            dualTravel = created
         end
         local workerMode = options.workerModeService or options.workerMode
         if workerMode == nil and NightShift.WorkerModeService and negotiation and npcCustomer and workerAvailability and booking then
@@ -683,15 +1460,179 @@ local defaultStages = {
             if not created then return err end
             workerMode = created
         end
+        local clientMode = options.clientModeService or options.clientMode
+        if clientMode == nil and features.clientMode ~= false and NightShift.ClientModeService and repositories.booking and booking and identity and npcWorker then
+            local created, err = NightShift.ClientModeService.new({
+                bookingService = booking,
+                repository = repositories.booking,
+                identityService = identity,
+                workerService = npcWorker,
+                locationService = locationService,
+                locationReservationService = locationReservation,
+                depositService = deposit,
+                travelService = npcTravel,
+                spawnService = npcSpawn,
+                arrivalService = npcArrival,
+                appointmentSessionService = appointmentSession,
+                settlementService = settlement,
+                pickupModeService = pickupMode,
+                dualTravelService = dualTravel,
+                reservationTtlSeconds = options.clientModeReservationTtlSeconds or options.clientBookingReservationTtlSeconds,
+                travelMode = options.clientModeTravelMode,
+                originResolver = options.clientModeOriginResolver,
+                clock = options.clock
+            })
+            if not created then return err end
+            clientMode = created
+        end
+        if clientBookingCommands and clientMode then clientBookingCommands._clientMode = clientMode end
+        local reputation = options.reputationService or options.reputation
+        if reputation == nil and features.reputation ~= false and NightShift.ReputationService and
+            repositories.workerProfile and repositories.clientProfile then
+            local created, err = NightShift.ReputationService.new({
+                workerProfileRepository = repositories.workerProfile,
+                clientProfileRepository = repositories.clientProfile,
+                npcProfileRepository = repositories.npcProfile,
+                npcWorkerService = npcWorker,
+                identityService = identity,
+                projectionRepository = repositories.bookingEvent,
+                config = config.reputation or NightShift.ReputationConfig,
+                clock = options.clock
+            })
+            if not created then return err end
+            reputation = created
+        end
+        if reputation and eventBus and type(reputation.subscribe) == 'function' then
+            local subscribed, subscribeError = reputation:subscribe(eventBus)
+            if type(subscribed) ~= 'table' or not subscribed.ok then return subscribeError or subscribed end
+        end
+        local reviewService = options.reviewService or options.review
+        if reviewService == nil and features.reputation ~= false and NightShift.ReviewService and repositories.review and booking then
+            local created, err = NightShift.ReviewService.new({
+                repository = repositories.review,
+                bookingService = booking,
+                identityService = identity,
+                clientProfileService = client,
+                clientProfileRepository = repositories.clientProfile,
+                npcWorkerService = npcWorker,
+                workerProfileService = worker,
+                npcProfileRepository = repositories.npcProfile,
+                config = config.reputation or NightShift.ReputationConfig
+            })
+            if not created then return err end
+            reviewService = created
+        end
+        local favoriteService = options.favoriteService or options.favorite
+        if favoriteService == nil and features.reputation ~= false and NightShift.FavoriteService and repositories.favorite and identity and npcWorker then
+            local created, err = NightShift.FavoriteService.new({
+                repository = repositories.favorite,
+                identityService = identity,
+                clientProfileService = client,
+                clientProfileRepository = repositories.clientProfile,
+                npcWorkerService = npcWorker,
+                config = config.reputation or NightShift.ReputationConfig,
+                persistentOnly = options.favoritePersistentOnly
+            })
+            if not created then return err end
+            favoriteService = created
+        end
+        local relationshipService = options.relationshipService or options.relationship
+        if relationshipService == nil and features.reputation ~= false and NightShift.RelationshipService and repositories.relationship then
+            local created, err = NightShift.RelationshipService.new({
+                repository = repositories.relationship,
+                identityService = identity,
+                clientProfileService = client,
+                clientProfileRepository = repositories.clientProfile,
+                npcWorkerService = npcWorker,
+                clientBookingCommandService = clientBookingCommands,
+                projectionRepository = repositories.bookingEvent,
+                config = config.reputation or NightShift.ReputationConfig
+            })
+            if not created then return err end
+            relationshipService = created
+        end
+        if relationshipService and eventBus and type(relationshipService.subscribe) == 'function' then
+            local subscribed, subscribeError = relationshipService:subscribe(eventBus)
+            if type(subscribed) ~= 'table' or not subscribed.ok then return subscribeError or subscribed end
+        end
+        local bookAgain = options.bookAgainService or options.bookAgain
+        if bookAgain == nil and features.reputation ~= false and NightShift.BookAgainService and clientBookingCommands and npcWorker then
+            local created, err = NightShift.BookAgainService.new({
+                clientBookingCommandService = clientBookingCommands,
+                npcWorkerService = npcWorker,
+                relationshipService = relationshipService,
+                bookingService = booking,
+                clock = options.clock
+            })
+            if not created then return err end
+            bookAgain = created
+        end
+        if recoveryService == nil and features.recovery ~= false and NightShift.RecoveryService
+            and repositories.booking and type(repositories.booking.findAll) == 'function' then
+            local created, err = NightShift.RecoveryService.new({
+                bookingRepository = repositories.booking,
+                bookingService = booking,
+                bookingReservationService = reservationService,
+                locationReservationService = locationReservation,
+                locationReservationRepository = repositories.locationReservation,
+                npcProfileRepository = repositories.npcProfile,
+                workerAvailabilityService = workerAvailability,
+                clientModeService = clientMode,
+                workerModeService = workerMode,
+                npcTravelService = npcTravel,
+                npcEntityRegistry = npcEntityRegistry,
+                settlementService = settlement,
+                auditService = auditService,
+                eventBus = eventBus,
+                clock = options.clock,
+                config = config.recovery,
+                systemActor = options.recoverySystemActor,
+                actorResolver = options.recoveryActorResolver
+            })
+            if not created then
+                if config.recovery and config.recovery.required == true then return err end
+            else
+                recoveryService = created
+            end
+        end
         if not bookingTimeline or not reservationService or not booking then
             return { ok = true, deferred = true, reason = 'booking services unavailable', services = {
                 location = locationService, locationReservation = locationReservation, vehicleLocation = vehicleLocation,
+                locationProviders = locationProviders, configLocations = configLocationProvider,
+                motelProviders = motelRegistry, housingProviders = housingRegistry,
+                locationProviderApi = locationProviderApi,
+                pickupLocation = pickupLocation, pickupVehicle = pickupVehicle, pickupMode = pickupMode, dualTravel = dualTravel,
                 npcProfileGenerator = npcProfileGenerator, npcWorker = npcWorker, marketplace = marketplace,
                 npcTravel = npcTravel, npcEntityRegistry = npcEntityRegistry, npcSpawn = npcSpawn, npcArrival = npcArrival,
-                district = districtService, demand = demandService, workerAvailability = workerAvailability, npcCustomer = npcCustomer
+                npcStreamingBudget = npcStreamingBudget, entityOwnershipPolicy = entityOwnershipPolicy,
+                stateBagPolicy = stateBagPolicy,
+                district = districtService, demand = demandService, workerAvailability = workerAvailability, npcCustomer = npcCustomer,
+                heat = heatService, demandHeatFeedback = feedbackService, vice = viceService,
+                clientBooking = clientBooking, clientBookingCommands = clientBookingCommands, clientMode = clientMode,
+                  eventBus = eventBus, summaryCache = summaryCache, reputation = reputation, review = reviewService,
+                favorite = favoriteService, relationship = relationshipService, blacklist = blacklistService,
+                 bookAgain = bookAgain, incident = incidentService, dispute = disputeService, safety = safetyService,
+                 idempotency = idempotencyStore, domainEvents = domainEvents, recovery = recoveryService,
+                 rateLimiter = rateLimiter, actionTokens = actionTokens
             } }
         end
         if npcArrival and npcArrival._booking == nil then npcArrival._booking = booking end
+        if npcArrival and npcArrival._actorResolver == nil and identity then
+            npcArrival._actorResolver = function(playerSource)
+                local resolved = identity:resolve(playerSource)
+                if type(resolved) == 'table' and resolved.ok and resolved.value then
+                    local reference = resolved.value.identityKey or resolved.value.key
+                    if reference then return { type = 'PLAYER', ref = reference, source = playerSource } end
+                end
+                return { type = 'PLAYER', ref = tostring(playerSource), source = playerSource }
+            end
+        end
+        if framework and clientMode and type(framework.onPlayerUnloaded) == 'function' then
+            pcall(framework.onPlayerUnloaded, framework, function(value)
+                local playerSource = type(value) == 'table' and value.source or value
+                if playerSource ~= nil and type(clientMode.disconnect) == 'function' then clientMode:disconnect(playerSource) end
+            end)
+        end
         return { ok = true, services = {
             identity = identity,
             workerProfile = worker,
@@ -700,16 +1641,38 @@ local defaultStages = {
             bookingTimeline = bookingTimeline,
             bookingReservation = reservationService,
             booking = booking,
+            eventBus = eventBus,
+            reputation = reputation,
+            review = reviewService,
+            favorite = favoriteService,
+            relationship = relationshipService,
+            blacklist = blacklistService,
+            bookAgain = bookAgain,
+            incident = incidentService,
+            dispute = disputeService,
+            safety = safetyService,
+            clientBooking = clientBooking,
+            clientBookingCommands = clientBookingCommands,
             serviceCatalog = catalog,
             pricing = pricing,
             negotiation = negotiation,
             appointmentSession = appointmentSession,
             workerMode = workerMode,
+            clientMode = clientMode,
+            pickupLocation = pickupLocation,
+            pickupVehicle = pickupVehicle,
+            pickupMode = pickupMode,
+            dualTravel = dualTravel,
             deposit = deposit,
             settlement = settlement,
             refund = refund,
             location = locationService,
             locationReservation = locationReservation,
+            locationProviders = locationProviders,
+            configLocations = configLocationProvider,
+            motelProviders = motelRegistry,
+            housingProviders = housingRegistry,
+            locationProviderApi = locationProviderApi,
             vehicleLocation = vehicleLocation,
             npcProfileGenerator = npcProfileGenerator,
             npcWorker = npcWorker,
@@ -718,13 +1681,241 @@ local defaultStages = {
             npcEntityRegistry = npcEntityRegistry,
             npcSpawn = npcSpawn,
             npcArrival = npcArrival,
+            npcStreamingBudget = npcStreamingBudget,
+            entityOwnershipPolicy = entityOwnershipPolicy,
+            stateBagPolicy = stateBagPolicy,
             district = districtService,
             demand = demandService,
+            heat = heatService,
+            demandHeatFeedback = feedbackService,
+            vice = viceService,
+            phone = phoneRegistry,
             workerAvailability = workerAvailability,
-            npcCustomer = npcCustomer
+            npcCustomer = npcCustomer,
+            scheduleConflict = scheduleConflict,
+            agency = agencyService,
+            agencyBooking = agencyBookingService,
+            venue = venueService,
+            audit = auditService,
+            analytics = analyticsService,
+            summaryCache = summaryCache,
+            diagnostics = diagnosticsService,
+            idempotency = idempotencyStore,
+            domainEvents = domainEvents,
+            recovery = recoveryService,
+            rateLimiter = rateLimiter,
+            actionTokens = actionTokens
         } }
     end
 }
+
+defaultStages.jobs = function(context, bootstrap)
+    local options = bootstrap and bootstrap.options or {}
+    local serviceResult = bootstrap and bootstrap.results and bootstrap.results.services or {}
+    local repositoryResult = bootstrap and bootstrap.results and bootstrap.results.repositories or {}
+    local services = serviceResult.services or serviceResult.value and serviceResult.value.services or {}
+    local repositories = repositoryResult.repositories or repositoryResult.value and repositoryResult.value.repositories or {}
+    local configResult = bootstrap and bootstrap.results and bootstrap.results.config or {}
+    local config = configResult.config or configResult.value and configResult.value.config or NightShift.DefaultConfig
+    local features = type(config.features) == 'table' and config.features or {}
+    local schedulingConfig = config.scheduling or NightShift.SchedulingConfig or {}
+    local recoveryConfig = config.recovery or NightShift.RecoveryConfig or {}
+    local recoveryService = options.recoveryService or options.recovery or services.recovery
+    local startupRecovery, recoverySummary
+    if features.recovery ~= false and recoveryConfig.enabled ~= false and NightShift.StartupRecoveryJob then
+        if type(recoveryService) == 'table' and type(recoveryService.runOnce) == 'function' then
+            local created, err = NightShift.StartupRecoveryJob.new({
+                recoveryService = recoveryService, config = recoveryConfig, clock = options.clock
+            })
+            if created then
+                startupRecovery = created
+                if options.runStartupRecovery ~= false then
+                    local result = startupRecovery:runOnce(nil, { dryRun = true, apply = false })
+                    if type(result) == 'table' and result.ok then
+                        recoverySummary = result.value
+                    elseif recoveryConfig.required == true or options.requireRecoveryJob == true then
+                        return result
+                    else
+                        recoverySummary = { deferred = true, failed = 1 }
+                    end
+                end
+            elseif recoveryConfig.required == true or options.requireRecoveryJob == true then
+                return err
+            end
+        elseif recoveryConfig.required == true or options.requireRecoveryJob == true then
+            return NightShift.Result.err(NightShift.Errors.Codes.RECOVERY_NOT_READY, 'startup recovery service is unavailable')
+        end
+    end
+    local heat = options.heatService or services.heat
+    local heatDecay = options.heatDecayJob or options.heatDecay
+    if heatDecay == nil and features.heat ~= false and heat and NightShift.HeatDecayJob then
+        local created, err = NightShift.HeatDecayJob.new({
+            heatService = heat,
+            config = config.heat or NightShift.HeatConfig,
+            clock = options.clock
+        })
+        if not created then return err end
+        heatDecay = created
+    end
+    local runtimeLoop = type(CreateThread) == 'function' and type(Wait) == 'function'
+    local heatStarted = false
+    local streamingBudget = options.npcStreamingBudgetService or options.npcStreamingBudget or services.npcStreamingBudget
+    local streamingStarted = false
+    local function isStreamingLeaseActive(lease)
+        local registry = options.npcEntityRegistry or options.npcEntityService or services.npcEntityRegistry
+        if type(registry) ~= 'table' or type(registry.get) ~= 'function' then return false end
+        if type(lease) ~= 'table' or type(lease.npcId) ~= 'string' then return false end
+        local current = registry:get(lease.npcId)
+        if type(current) ~= 'table' or current.ok ~= true or type(current.value) ~= 'table' then return false end
+        local state = tostring(current.value.state or ''):upper()
+        local entity = current.value.entity
+        if state ~= 'BOUND' or entity == nil then return false end
+        local doesEntityExist = type(DoesEntityExist) == 'function' and DoesEntityExist or rawget(_G, 'DoesEntityExist')
+        if type(doesEntityExist) == 'function' then
+            local ok, exists = pcall(doesEntityExist, entity)
+            if not ok or exists ~= true then return false end
+        end
+        return true
+    end
+    local function startStreamingBudget()
+        if streamingBudget == nil or type(streamingBudget.start) ~= 'function' then
+            return { ok = true, skipped = true }
+        end
+        if options.startNpcStreamingBudget == false then
+            return { ok = true, skipped = true, disabled = true }
+        end
+        if not runtimeLoop then
+            return { ok = true, skipped = true, runtimeUnavailable = true }
+        end
+        local started = streamingBudget:start({ isLeaseActive = isStreamingLeaseActive })
+        if type(started) == 'table' and started.ok == true then
+            local value = type(started.value) == 'table' and started.value or {}
+            streamingStarted = value.running == true
+        end
+        return started
+    end
+    local streamingStart = startStreamingBudget()
+    if type(streamingStart) ~= 'table' or not streamingStart.ok then
+        if options.requireNpcStreamingBudget == true then return streamingStart end
+    end
+    if type(bootstrap.onCleanup) == 'function' then
+        bootstrap:onCleanup(function()
+            if streamingStarted and streamingBudget and type(streamingBudget.stop) == 'function' then
+                streamingBudget:stop()
+            end
+        end)
+    end
+    local function startHeatDecay()
+        if heatDecay == nil or options.startHeatDecayJob == false then
+            return { ok = true, skipped = true }
+        end
+        if not runtimeLoop then
+            return NightShift.Result.err(NightShift.Errors.Codes.HEAT_OPERATION_FAILED, 'heat decay runtime loop is unavailable')
+        end
+        local started = heatDecay:start()
+        if type(started) == 'table' and started.ok then heatStarted = true end
+        return started
+    end
+    if features.scheduling == false or schedulingConfig.enabled == false then
+        local started, startError = startHeatDecay()
+        if type(started) ~= 'table' or not started.ok then
+            if options.requireHeatDecayJob == true then return startError or started end
+        end
+        if type(bootstrap.onCleanup) == 'function' then
+            bootstrap:onCleanup(function()
+                if heatStarted and type(heatDecay.stop) == 'function' then heatDecay:stop() end
+            end)
+        end
+        return { ok = true, skipped = true, reason = 'scheduling disabled',
+            jobs = { heatDecay = heatDecay, npcStreamingBudget = streamingBudget, startupRecovery = startupRecovery },
+            recoverySummary = recoverySummary,
+            started = { heatDecay = heatStarted, npcStreamingBudget = streamingStarted } }
+    end
+    local booking = options.bookingService or services.booking
+    local repository = options.bookingRepository or repositories.booking
+    if type(booking) ~= 'table' or type(repository) ~= 'table' then
+        local started, startError = startHeatDecay()
+        if type(started) ~= 'table' or not started.ok then
+            if options.requireHeatDecayJob == true then return startError or started end
+        end
+        if type(bootstrap.onCleanup) == 'function' then
+            bootstrap:onCleanup(function()
+                if heatStarted and type(heatDecay.stop) == 'function' then heatDecay:stop() end
+            end)
+        end
+        return { ok = true, deferred = true, reason = 'booking services unavailable',
+            jobs = { heatDecay = heatDecay, npcStreamingBudget = streamingBudget, startupRecovery = startupRecovery },
+            recoverySummary = recoverySummary,
+            started = { heatDecay = heatStarted, npcStreamingBudget = streamingStarted } }
+    end
+    local scheduler = options.scheduledBookingJob or options.schedulingJob
+    if scheduler == nil and NightShift.ScheduledBookingJob then
+        local created, err = NightShift.ScheduledBookingJob.new({
+            repository = repository,
+            bookingService = booking,
+            config = schedulingConfig,
+            clock = options.clock,
+            activationOptions = options.scheduledActivationOptions
+        })
+        if not created then return err end
+        scheduler = created
+    end
+    local noShow = options.noShowJob
+    if noShow == nil and NightShift.NoShowJob then
+        local created, err = NightShift.NoShowJob.new({
+            repository = repository,
+            bookingService = booking,
+            refundService = options.refundService or services.refund,
+            depositService = options.depositService or services.deposit,
+            reputationService = options.reputationService or services.reputation,
+            incidentService = options.incidentService or services.incident,
+            eventBus = options.eventBus or services.eventBus,
+            config = schedulingConfig,
+            clock = options.clock,
+            refundActorResolver = options.noShowRefundActorResolver
+        })
+        if not created then return err end
+        noShow = created
+    end
+    if type(scheduler) ~= 'table' or type(noShow) ~= 'table' then
+        return { ok = true, deferred = true, reason = 'scheduling jobs unavailable',
+            jobs = { npcStreamingBudget = streamingBudget, startupRecovery = startupRecovery },
+            recoverySummary = recoverySummary,
+            started = { heatDecay = heatStarted, npcStreamingBudget = streamingStarted } }
+    end
+    local started = { scheduledBooking = false, noShow = false, heatDecay = false,
+        npcStreamingBudget = streamingStarted }
+    local heatStart, heatStartError = startHeatDecay()
+    if type(heatStart) ~= 'table' or not heatStart.ok then
+        if options.requireHeatDecayJob == true then return heatStartError or heatStart end
+    end
+    started.heatDecay = heatStarted
+    if options.startSchedulingJobs ~= false and runtimeLoop then
+        local scheduledStart = scheduler:start()
+        if type(scheduledStart) ~= 'table' or not scheduledStart.ok then
+            if options.requireSchedulingJobs == true then return scheduledStart end
+        else
+            started.scheduledBooking = true
+        end
+        local noShowStart = noShow:start()
+        if type(noShowStart) ~= 'table' or not noShowStart.ok then
+            if options.requireSchedulingJobs == true then return noShowStart end
+        else
+            started.noShow = true
+        end
+    end
+    if type(bootstrap.onCleanup) == 'function' then
+        bootstrap:onCleanup(function()
+            if type(scheduler.stop) == 'function' then scheduler:stop() end
+            if type(noShow.stop) == 'function' then noShow:stop() end
+            if heatStarted and type(heatDecay.stop) == 'function' then heatDecay:stop() end
+        end)
+    end
+    return { ok = true,
+        jobs = { scheduledBooking = scheduler, noShow = noShow, startupRecovery = startupRecovery },
+        recoverySummary = recoverySummary, started = started }
+end
+
 for _, stage in ipairs(NightShift.Constants.STAGES) do
     if not defaultStages[stage] then
         defaultStages[stage] = function() return { ok = true, deferred = true } end
@@ -946,4 +2137,13 @@ end
 if type(loadResourceFile) == 'function' and type(getCurrentResourceName) == 'function' then
     local resourceName = getCurrentResourceName()
     loadRuntimeScript('server/dev/s10_smoke.lua', 'S10 smoke command', resourceName)
+    loadRuntimeScript('server/dev/s15_smoke.lua', 'S15 smoke command', resourceName)
+    loadRuntimeScript('server/dev/s17_smoke.lua', 'S17 smoke command', resourceName)
+    loadRuntimeScript('server/dev/s18_smoke.lua', 'S18 smoke command', resourceName)
+    loadRuntimeScript('server/dev/s19_smoke.lua', 'S19 smoke command', resourceName)
+    loadRuntimeScript('server/dev/s20_smoke.lua', 'S20 smoke command', resourceName)
+    loadRuntimeScript('server/dev/s22_smoke.lua', 'S22 smoke command', resourceName)
+    loadRuntimeScript('server/dev/s24_smoke.lua', 'S24 smoke command', resourceName)
+    loadRuntimeScript('server/dev/s25_smoke.lua', 'S25 smoke command', resourceName)
+    loadRuntimeScript('server/dev/s26_smoke.lua', 'S26 smoke command', resourceName)
 end

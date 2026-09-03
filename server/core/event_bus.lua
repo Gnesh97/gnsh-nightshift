@@ -43,6 +43,8 @@ function Bus.new(options)
         _logger = logger,
         _subscriptions = {},
         _nextHandle = 0,
+        _retryLimit = math.max(1, math.floor(tonumber(options.retryLimit) or 3)),
+        _failed = {},
         _closed = false
     }, Bus)
 end
@@ -113,6 +115,13 @@ function Bus:publishCommitted(eventName, payload, metadata)
                 handle = subscription.handle,
                 code = failureCode(ok and handlerResult or nil)
             }
+            self._failed[#self._failed + 1] = {
+                eventName = eventName,
+                envelope = copy(envelope),
+                subscription = subscription,
+                attempts = 1,
+                code = failures[#failures].code
+            }
             pcall(function()
                 self._logger:withCorrelation(correlationId):error('event_bus', 'Committed event handler failed', {
                     eventName = eventName,
@@ -127,12 +136,61 @@ function Bus:publishCommitted(eventName, payload, metadata)
 
     return Result.ok({ delivered = delivered, failed = failed, failures = failures }, {
         correlationId = correlationId,
-        occurredAt = timestamp
+        occurredAt = timestamp,
+        retryPending = #self._failed
     })
+end
+
+function Bus:retryFailed(limit)
+    if self._closed then return Result.err('LIFECYCLE_STOPPED', 'Event bus is stopped') end
+    local maximum = math.max(1, math.floor(tonumber(limit) or self._retryLimit))
+    local pending = self._failed
+    self._failed = {}
+    local retried, delivered, failed = 0, 0, 0
+    local failures = {}
+    for _, item in ipairs(pending) do
+        if item.attempts < maximum then
+            retried = retried + 1
+            local ok, handlerResult = pcall(item.subscription.handler, copy(item.envelope))
+            local handlerFailed = not ok or handlerResult == false or
+                (type(handlerResult) == 'table' and handlerResult.ok == false)
+            if handlerFailed then
+                failed = failed + 1
+                local code = failureCode(ok and handlerResult or nil)
+                failures[#failures + 1] = { handle = item.subscription.handle, code = code }
+                if item.attempts + 1 < maximum then
+                    self._failed[#self._failed + 1] = {
+                        eventName = item.eventName,
+                        envelope = copy(item.envelope),
+                        subscription = item.subscription,
+                        attempts = item.attempts + 1,
+                        code = code
+                    }
+                end
+            else
+                delivered = delivered + 1
+            end
+        else
+            failed = failed + 1
+            failures[#failures + 1] = { handle = item.subscription.handle, code = item.code or 'HANDLER_FAILED' }
+        end
+    end
+    return Result.ok({
+        retried = retried,
+        delivered = delivered,
+        failed = failed,
+        failures = failures,
+        retryPending = #self._failed
+    })
+end
+
+function Bus:pendingFailures()
+    return #self._failed
 end
 
 function Bus:close()
     self._subscriptions = {}
+    self._failed = {}
     self._closed = true
     return true
 end

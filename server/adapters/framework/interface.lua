@@ -40,9 +40,47 @@ local function normalizeEvent(adapter, kind, ...)
     local first = select(1, ...)
     local source = tonumber(first)
     if not source and type(first) == 'table' then source = tonumber(first.source or first.playerId or first.id) end
+    if not source then source = tonumber(rawget(_G, 'source')) end
     if not validSource(source) then return nil end
     local result = adapter:getPlayer(source)
-    return result and result.ok and result.value or nil
+    if result and result.ok then return result.value end
+    if kind == 'unloaded' and type(adapter.getLastIdentity) == 'function' then
+        return adapter:getLastIdentity(source, false)
+    end
+    return nil
+end
+
+local function beginUnloadDispatch(adapter, value)
+    if type(value) ~= 'table' then return nil end
+    local source = tonumber(value.source)
+    if not validSource(source) then return nil end
+    local current = adapter._unloadDispatches[source]
+    if current then return copy(current.identity) end
+    if adapter._unloadSeen[source] then return nil end
+    local identity = copy(value)
+    identity.loaded = false
+    adapter._unloadSeen[source] = true
+    adapter._unloadDispatches[source] = {
+        identity = identity,
+        remaining = math.max(tonumber(adapter._unloadHandlerCount) or 0, 1)
+    }
+    return copy(identity)
+end
+
+local function finishUnloadDispatch(adapter, source)
+    source = tonumber(source)
+    if not validSource(source) then return end
+    local current = adapter._unloadDispatches[source]
+    if not current then return end
+    if current.remaining > 1 then
+        adapter._unloadDispatches[source] = {
+            identity = current.identity,
+            remaining = current.remaining - 1
+        }
+        return
+    end
+    adapter._unloadDispatches[source] = nil
+    adapter._identityCache[source] = nil
 end
 
 local function register(adapter, kind, handler)
@@ -55,17 +93,36 @@ local function register(adapter, kind, handler)
     end
     local wrapped = function(...)
         local value = normalizeEvent(adapter, kind, ...)
+        if kind == 'unloaded' then value = beginUnloadDispatch(adapter, value) end
         if value then
+            local source = tonumber(value.source)
+            if kind == 'loaded' and validSource(source) then
+                adapter._unloadSeen[source] = nil
+                adapter._unloadDispatches[source] = nil
+            end
+            if kind ~= 'unloaded' and type(adapter._identityCache) == 'table' then
+                adapter._identityCache[source] = copy(value)
+            end
             local ok, err = pcall(handler, value)
+            if kind == 'unloaded' then finishUnloadDispatch(adapter, source) end
             if not ok then
                 return providerError(Errors.PROVIDER_INVALID, 'framework lifecycle handler failed', { kind = kind, reason = tostring(err) })
             end
         end
         return value
     end
+    if kind == 'unloaded' then
+        adapter._unloadHandlerCount = (tonumber(adapter._unloadHandlerCount) or 0) + 1
+    end
     local ok, token = pcall(registerFn, wrapped)
-    if not ok then return nil, providerError(Errors.PROVIDER_UNAVAILABLE, 'framework lifecycle registration failed', { kind = kind, reason = tostring(token) }) end
-    return token or true
+    if not ok then
+        if kind == 'unloaded' then adapter._unloadHandlerCount = math.max((tonumber(adapter._unloadHandlerCount) or 1) - 1, 0) end
+        return nil, providerError(Errors.PROVIDER_UNAVAILABLE, 'framework lifecycle registration failed', { kind = kind, reason = tostring(token) })
+    end
+    if token == nil or token == false then
+        if kind == 'unloaded' then adapter._unloadHandlerCount = math.max((tonumber(adapter._unloadHandlerCount) or 1) - 1, 0) end
+    end
+    return token
 end
 
 function Interface.new(options)
@@ -95,6 +152,10 @@ function Interface.new(options)
             duty = options.onDutyChanged
         },
         _normalizeEvent = options.normalizeEvent,
+        _identityCache = {},
+        _unloadHandlerCount = 0,
+        _unloadDispatches = {},
+        _unloadSeen = {},
         _capabilities = copy(options.capabilities or {})
     }, Adapter)
     adapter._capabilities.provider = adapter.name
@@ -149,10 +210,19 @@ function Adapter:getPlayer(source)
         provider = self.name
     })
     if not identity then return providerError(Errors.PROVIDER_INVALID, 'framework returned an invalid normalized identity', { source = source, provider = self.name }) end
+    self._identityCache[source] = copy(identity)
     return Result.ok(identity)
 end
 
 Adapter.getIdentity = Adapter.getPlayer
+
+function Adapter:getLastIdentity(source, loaded)
+    source = tonumber(source)
+    if not validSource(source) or type(self._identityCache[source]) ~= 'table' then return nil end
+    local identity = copy(self._identityCache[source])
+    if loaded ~= nil then identity.loaded = loaded == true end
+    return identity
+end
 
 function Adapter:getJob(source)
     local result = self:getPlayer(source)

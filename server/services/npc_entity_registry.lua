@@ -6,6 +6,7 @@ local Enums = NightShift.Enums
 
 local Registry = {}
 Registry.__index = Registry
+local current
 
 local function copy(value, seen)
     if type(value) ~= 'table' then return value end
@@ -68,7 +69,10 @@ end
 
 function Registry.new(options)
     options = options or {}
-    return setmetatable({ _clock = options.clock, _bindings = {}, _generations = {} }, Registry)
+    return setmetatable({
+        _clock = options.clock, _bindings = {}, _generations = {},
+        _ownershipPolicy = options.ownershipPolicy
+    }, Registry)
 end
 
 function Registry:register(profileKey, metadata)
@@ -129,7 +133,7 @@ function Registry:get(profileKey)
     return Result.ok(copy(binding))
 end
 
-local function current(self, profileKey, generationTokenValue)
+current = function(self, profileKey, generationTokenValue)
     if not token(profileKey, 160) then return nil, invalid('NPC entity profile key is invalid') end
     local binding = self._bindings[profileKey]
     if not binding or binding.state == 'DESPAWNED' then return nil, notFound(profileKey) end
@@ -158,6 +162,17 @@ function Registry:bind(profileKey, generationTokenValue, entity, metadata)
 end
 
 Registry.updateEntity = Registry.bind
+
+function Registry:updateTravel(profileKey, generationTokenValue, travelKey, bookingId)
+    local binding, errorResult = current(self, profileKey, generationTokenValue)
+    if not binding then return errorResult end
+    if not token(travelKey, 200) then return invalid('NPC entity travel key is invalid') end
+    if bookingId ~= nil and (not token(bookingId, 160) or binding.bookingId ~= bookingId) then
+        return bindingError(Codes.ENTITY_GENERATION_MISMATCH, 'NPC entity booking context does not match')
+    end
+    binding.travelKey, binding.updatedAt = travelKey, now(self._clock)
+    return Result.ok(copy(binding))
+end
 
 function Registry:updateOwner(profileKey, generationTokenValue, owner)
     local binding, errorResult = current(self, profileKey, generationTokenValue)
@@ -202,7 +217,33 @@ function Registry:validate(profileKey, generationTokenValue, context)
         return bindingError(Codes.ENTITY_GENERATION_MISMATCH, 'NPC network handle does not match')
     end
     if context.owner ~= nil and binding.owner ~= nil and source(context.owner) ~= binding.owner then
-        return bindingError(Codes.ENTITY_GENERATION_MISMATCH, 'NPC entity owner does not match')
+        -- OneSync may migrate the physical network owner.  When the explicit
+        -- S28 policy is installed, validate the logical generation/context but
+        -- treat an owner change as observational metadata rather than a
+        -- booking authorization decision.  Keep the legacy strict check for
+        -- isolated embedders that did not opt into the policy.
+        local policy = self._ownershipPolicy
+        if type(policy) ~= 'table' or type(policy.classify) ~= 'function' then
+            return bindingError(Codes.ENTITY_GENERATION_MISMATCH, 'NPC entity owner does not match')
+        end
+        local classified = policy:classify({
+            profileKey = binding.profileKey,
+            travelKey = binding.travelKey,
+            bookingId = binding.bookingId,
+            generation = binding.generation,
+            generationToken = binding.generationToken,
+            entity = binding.entity,
+            networkId = binding.networkId,
+            owner = binding.owner,
+            state = binding.state,
+            serverOwned = true
+        }, {
+            entityPresent = binding.entity ~= nil,
+            networkOwner = context.owner,
+            networkId = context.networkId,
+            generationToken = generationTokenValue
+        })
+        if type(classified) ~= 'table' or classified.ok ~= true then return classified end
     end
     return Result.ok(copy(binding))
 end

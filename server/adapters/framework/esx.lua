@@ -9,10 +9,10 @@ local function invoke(container, method, ...)
     if type(container) ~= 'table' then return nil end
     local fn = container[method]
     if type(fn) ~= 'function' then return nil end
-    local ok, value = pcall(fn, container, ...)
-    if ok and value ~= nil then return value end
-    ok, value = pcall(fn, ...)
-    return ok and value or nil
+    local called, value = pcall(fn, container, ...)
+    if called and value ~= nil then return value end
+    called, value = pcall(fn, ...)
+    return called and value or nil
 end
 
 local function getESX(options)
@@ -45,9 +45,13 @@ local function normalizeEvent(adapter, kind, source, payload)
     local first = source
     source = tonumber(first) or (type(payload) == 'table' and tonumber(payload.source or payload.playerId or payload.ServerId or payload.serverId))
     if not source and type(first) == 'table' then source = tonumber(first.source or first.playerId or first.ServerId or first.serverId) end
+    if not source then source = tonumber(rawget(_G, 'source')) end
     if not source then return nil end
     local result = adapter:getPlayer(source)
     local identity = result and result.ok and result.value or nil
+    if not identity and kind == 'unloaded' and type(adapter.getLastIdentity) == 'function' then
+        identity = adapter:getLastIdentity(source, false)
+    end
     if (kind == 'job' or kind == 'duty') and identity and type(payload) == 'table' then
         local current = Types.copy(identity.job or {})
         current.name = payload.name or payload.label or current.name
@@ -57,6 +61,13 @@ local function normalizeEvent(adapter, kind, source, payload)
         if payload.onDuty ~= nil then current.onDuty = payload.onDuty end
         if payload.onduty ~= nil then current.onDuty = payload.onduty end
         identity.job = Types.job(current)
+    elseif kind == 'duty' and identity and type(payload) == 'boolean' then
+        local current = Types.copy(identity.job or {})
+        current.onDuty = payload
+        identity.job = Types.job(current)
+    end
+    if kind == 'unloaded' and identity then
+        identity.loaded = false
     end
     return identity
 end
@@ -85,8 +96,8 @@ function Adapter.new(options)
             if type(getPlayerFromId) ~= 'function' then return nil end
             local ok, value = pcall(getPlayerFromId, source)
             if ok and value ~= nil then return value end
-            ok, value = pcall(getPlayerFromId, esx, source)
-            return ok and value or nil
+            local called, value = pcall(getPlayerFromId, esx, source)
+            return called and value or nil
         end,
         isPlayerLoaded = function(source)
             if type(options.isPlayerLoaded) == 'function' then
@@ -100,8 +111,8 @@ function Adapter.new(options)
             if type(getPlayerFromId) ~= 'function' then return false end
             local ok, value = pcall(getPlayerFromId, source)
             if ok and value ~= nil then return true end
-            ok, value = pcall(getPlayerFromId, esx, source)
-            return ok and value ~= nil
+            local called, value = pcall(getPlayerFromId, esx, source)
+            return called and value ~= nil
         end,
         getIdentifier = function(player)
             return invoke(player, 'getIdentifier') or player.identifier or player.license

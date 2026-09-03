@@ -151,6 +151,8 @@ local function normalize(values)
         if value == nil then return nil, invalid('NPC profile counters are invalid', { field = key }) end
         counters[key] = value
     end
+    local reviewCount = integer(values.reviewCount or values.review_count or 0, 0, 2147483647)
+    if reviewCount == nil then return nil, invalid('NPC profile review count is invalid') end
     local version = integer(values.version or 1, 1)
     if not version then return nil, invalid('NPC profile version is invalid') end
     local createdAt = timestamp(values.createdAt or values.created_at)
@@ -173,6 +175,7 @@ local function normalize(values)
         budgetClass = budgetClass,
         priceClass = priceClass,
         rating = rating,
+        reviewCount = reviewCount,
         traits = traits,
         tags = tags,
         homeDistrict = homeDistrict,
@@ -220,6 +223,7 @@ function Profile.apply(profile, changes)
         budgetClass = 'budgetClass', budget_class = 'budgetClass',
         priceClass = 'priceClass', price_class = 'priceClass',
         rating = 'rating', traits = 'traits', tags = 'tags',
+        reviewCount = 'reviewCount', review_count = 'reviewCount',
         homeDistrict = 'homeDistrict', home_district = 'homeDistrict',
         activeDistrict = 'activeDistrict', active_district = 'activeDistrict',
         availability = 'availability', travelMode = 'travelMode', travel_mode = 'travelMode',
@@ -250,6 +254,7 @@ function Profile.toRow(profile)
         budget_class = value.budgetClass,
         price_class = value.priceClass,
         rating = value.rating,
+        review_count = value.reviewCount,
         availability = value.availability,
         traits = copy(value.traits),
         tags = copy(value.tags),

@@ -449,6 +449,108 @@ local function normalizeDemandDistricts(raw, path)
     return output
 end
 
+local function validateReputationConfig(raw)
+    if raw == nil then raw = NightShift.ReputationConfig or {} end
+    if type(raw) ~= 'table' then return fail('INVALID_CONFIG', 'reputation', 'reputation configuration must be a table') end
+    local output = copy(raw)
+    local enabled, enabledError = booleanValue(raw.enabled, 'reputation.enabled', true)
+    if enabled == nil then return nil, enabledError end
+    local function bounded(name, fallback, minimum, maximum)
+        local value = raw[name]
+        value = value == nil and fallback or value
+        if not finite(value) or value < minimum or value > maximum then
+            return nil, fail('INVALID_CONFIG', 'reputation.' .. name, 'reputation value is outside safe bounds')
+        end
+        return value
+    end
+    local minimum, minimumError = bounded('min', 0, 0, 100)
+    if minimum == nil then return nil, minimumError end
+    local maximum, maximumError = bounded('max', 100, minimum, 100)
+    if maximum == nil then return nil, maximumError end
+    if maximum < minimum then return fail('INVALID_CONFIG', 'reputation.max', 'reputation maximum must not be below minimum') end
+    local initial, initialError = bounded('initial', math.floor((minimum + maximum) / 2), minimum, maximum)
+    if initial == nil then return nil, initialError end
+    local threshold = raw.regularThreshold == nil and 3 or raw.regularThreshold
+    if not finite(threshold) or threshold < 1 or threshold > 1000 or threshold ~= math.floor(threshold) then
+        return fail('INVALID_CONFIG', 'reputation.regularThreshold', 'regular threshold must be a bounded integer')
+    end
+    local function deltaMap(name)
+        local source = raw[name]
+        if source == nil then source = {} end
+        if type(source) ~= 'table' then return nil, fail('INVALID_CONFIG', 'reputation.' .. name, 'reputation delta map must be a table') end
+        local allowed = { completion = true, cancellation = true, noShow = true, paymentReliability = true }
+        local map = {}
+        for key, value in pairs(source) do
+            if not allowed[key] or not finite(value) or value < -100 or value > 100 then
+                return nil, fail('INVALID_CONFIG', 'reputation.' .. name .. '.' .. tostring(key), 'reputation delta is outside safe bounds')
+            end
+            map[key] = value
+        end
+        return map
+    end
+    local worker, workerError = deltaMap('worker')
+    if not worker then return nil, workerError end
+    local client, clientError = deltaMap('client')
+    if not client then return nil, clientError end
+    local review = raw.review
+    if review == nil then review = {} end
+    if type(review) ~= 'table' then return nil, fail('INVALID_CONFIG', 'reputation.review', 'review config must be a table') end
+    local reviewMinimum = review.minimum == nil and 1 or review.minimum
+    local reviewMaximum = review.maximum == nil and 5 or review.maximum
+    local textMaxLength = review.textMaxLength == nil and 1000 or review.textMaxLength
+    if not finite(reviewMinimum) or reviewMinimum < 1 or reviewMinimum > 5 or reviewMinimum ~= math.floor(reviewMinimum) then
+        return nil, fail('INVALID_CONFIG', 'reputation.review.minimum', 'review minimum is invalid')
+    end
+    if not finite(reviewMaximum) or reviewMaximum < reviewMinimum or reviewMaximum > 5 or reviewMaximum ~= math.floor(reviewMaximum) then
+        return nil, fail('INVALID_CONFIG', 'reputation.review.maximum', 'review maximum is invalid')
+    end
+    if not finite(textMaxLength) or textMaxLength < 0 or textMaxLength > 2000 or textMaxLength ~= math.floor(textMaxLength) then
+        local _, errorResult = fail('INVALID_CONFIG', 'reputation.review.textMaxLength', 'review text limit is invalid')
+        return nil, errorResult
+    end
+    output.enabled, output.min, output.max, output.initial = enabled, minimum, maximum, initial
+    output.regularThreshold, output.worker, output.client = threshold, worker, client
+    output.review = { minimum = reviewMinimum, maximum = reviewMaximum, textMaxLength = textMaxLength }
+    local favorite = raw.favorite
+    if favorite == nil then favorite = {} end
+    if type(favorite) ~= 'table' then
+        local _, errorResult = fail('INVALID_CONFIG', 'reputation.favorite', 'favorite config must be a table')
+        return nil, errorResult
+    end
+    local persistentOnly, favoriteError = booleanValue(favorite.persistentOnly, 'reputation.favorite.persistentOnly', true)
+    if persistentOnly == nil then return nil, favoriteError end
+    output.favorite = { persistentOnly = persistentOnly }
+    local relationship = raw.relationship
+    if relationship == nil then relationship = {} end
+    if type(relationship) ~= 'table' then
+        local _, errorResult = fail('INVALID_CONFIG', 'reputation.relationship', 'relationship config must be a table')
+        return nil, errorResult
+    end
+    local relationshipThreshold = relationship.regularThreshold == nil and threshold or relationship.regularThreshold
+    if not finite(relationshipThreshold) or relationshipThreshold < 1 or relationshipThreshold > 1000 or relationshipThreshold ~= math.floor(relationshipThreshold) then
+        local _, errorResult = fail('INVALID_CONFIG', 'reputation.relationship.regularThreshold', 'relationship threshold is invalid')
+        return nil, errorResult
+    end
+    local function relationshipDelta(name, fallback)
+        local value = relationship[name] == nil and fallback or relationship[name]
+        if not finite(value) or value < -100 or value > 100 then
+            local _, errorResult = fail('INVALID_CONFIG', 'reputation.relationship.' .. name, 'relationship trust delta is invalid')
+            return nil, errorResult
+        end
+        return value
+    end
+    local trustPerSettled, settledError = relationshipDelta('trustPerSettled', 10)
+    if trustPerSettled == nil then return nil, settledError end
+    local trustPerCancelled, cancelledError = relationshipDelta('trustPerCancelled', 0)
+    if trustPerCancelled == nil then return nil, cancelledError end
+    output.relationship = {
+        regularThreshold = relationshipThreshold,
+        trustPerSettled = trustPerSettled,
+        trustPerCancelled = trustPerCancelled
+    }
+    return output
+end
+
 local function validateDemandConfig(raw)
     if raw == nil then raw = NightShift.DemandConfig or {} end
     if type(raw) ~= 'table' then return fail('INVALID_CONFIG', 'demand', 'demand configuration must be a table') end
@@ -519,6 +621,344 @@ local function validateDemandConfig(raw)
     return output
 end
 
+local function validateSchedulingConfig(raw)
+    if raw == nil then raw = NightShift.SchedulingConfig or {} end
+    if type(raw) ~= 'table' then return fail('INVALID_CONFIG', 'scheduling', 'scheduling configuration must be a table') end
+    local allowed = {
+        enabled = true, tickSeconds = true, batchSize = true,
+        reservationLeadTimeSeconds = true, noShowGraceSeconds = true,
+        conflictBufferSeconds = true, defaultDurationSeconds = true
+    }
+    for key in pairs(raw) do
+        if not allowed[key] then return fail('INVALID_CONFIG', 'scheduling.' .. tostring(key), 'scheduling field is not allowlisted') end
+    end
+    local enabled, enabledError = booleanValue(raw.enabled, 'scheduling.enabled', true)
+    if enabled == nil then return nil, enabledError end
+    local function setting(name, fallback, minimum, maximum)
+        local value = raw[name]
+        value = value == nil and fallback or value
+        if not finite(value) or value < minimum or value > maximum or value ~= math.floor(value) then
+            local _, errorResult = fail('INVALID_CONFIG', 'scheduling.' .. name, 'scheduling setting is outside safe bounds')
+            return nil, errorResult
+        end
+        return value
+    end
+    local tick, tickError = setting('tickSeconds', 15, 1, 86400)
+    if tick == nil then return nil, tickError end
+    local batch, batchError = setting('batchSize', 50, 1, 100)
+    if batch == nil then return nil, batchError end
+    local lead, leadError = setting('reservationLeadTimeSeconds', 300, 0, 604800)
+    if lead == nil then return nil, leadError end
+    local grace, graceError = setting('noShowGraceSeconds', 300, 0, 604800)
+    if grace == nil then return nil, graceError end
+    local buffer, bufferError = setting('conflictBufferSeconds', 60, 0, 3600)
+    if buffer == nil then return nil, bufferError end
+    local duration, durationError = setting('defaultDurationSeconds', 1800, 1, 86400)
+    if duration == nil then return nil, durationError end
+    return {
+        enabled = enabled, tickSeconds = tick, batchSize = batch,
+        reservationLeadTimeSeconds = lead, noShowGraceSeconds = grace,
+        conflictBufferSeconds = buffer, defaultDurationSeconds = duration
+    }
+end
+
+local function validateRecoveryConfig(raw)
+    if raw == nil then raw = NightShift.RecoveryConfig or {} end
+    if type(raw) ~= 'table' then return fail('INVALID_CONFIG', 'recovery', 'recovery configuration must be a table') end
+    local allowed = {
+        enabled = true, required = true, apply = true, pageSize = true, maxPages = true,
+        disconnectGraceSeconds = true, interruptReserved = true,
+        interruptTravelling = true, interruptActive = true,
+        retryCompletedSettlement = true, releaseHeldDeposits = true,
+        releaseReservations = true
+    }
+    for key in pairs(raw) do
+        if not allowed[key] then return fail('INVALID_CONFIG', 'recovery.' .. tostring(key), 'recovery field is not allowlisted') end
+    end
+    local enabled, enabledError = booleanValue(raw.enabled, 'recovery.enabled', true)
+    if enabled == nil then return nil, enabledError end
+    local required, requiredError = booleanValue(raw.required, 'recovery.required', false)
+    if required == nil then return nil, requiredError end
+    local apply, applyError = booleanValue(raw.apply, 'recovery.apply', false)
+    if apply == nil then return nil, applyError end
+    local function setting(name, fallback, minimum, maximum)
+        local value = raw[name]
+        value = value == nil and fallback or value
+        if not finite(value) or value < minimum or value > maximum or value ~= math.floor(value) then
+            local _, errorResult = fail('INVALID_CONFIG', 'recovery.' .. name, 'recovery setting is outside safe bounds')
+            return nil, errorResult
+        end
+        return value
+    end
+    local pageSize, pageError = setting('pageSize', 100, 1, 1000)
+    if pageSize == nil then return nil, pageError end
+    local maxPages, pagesError = setting('maxPages', 20, 1, 100)
+    if maxPages == nil then return nil, pagesError end
+    local grace, graceError = setting('disconnectGraceSeconds', 30, 0, 86400)
+    if grace == nil then return nil, graceError end
+    local function flag(name, fallback)
+        local value, errorResult = booleanValue(raw[name], 'recovery.' .. name, fallback)
+        if value == nil then return nil, errorResult end
+        return value
+    end
+    local interruptReserved, reservedError = flag('interruptReserved', true)
+    if interruptReserved == nil then return nil, reservedError end
+    local interruptTravelling, travellingError = flag('interruptTravelling', true)
+    if interruptTravelling == nil then return nil, travellingError end
+    local interruptActive, activeError = flag('interruptActive', true)
+    if interruptActive == nil then return nil, activeError end
+    local retryCompletedSettlement, settlementError = flag('retryCompletedSettlement', true)
+    if retryCompletedSettlement == nil then return nil, settlementError end
+    local releaseHeldDeposits, depositError = flag('releaseHeldDeposits', true)
+    if releaseHeldDeposits == nil then return nil, depositError end
+    local releaseReservations, reservationError = flag('releaseReservations', true)
+    if releaseReservations == nil then return nil, reservationError end
+    return {
+        enabled = enabled, required = required, apply = apply, pageSize = pageSize,
+        maxPages = maxPages, disconnectGraceSeconds = grace,
+        interruptReserved = interruptReserved, interruptTravelling = interruptTravelling,
+        interruptActive = interruptActive, retryCompletedSettlement = retryCompletedSettlement,
+        releaseHeldDeposits = releaseHeldDeposits, releaseReservations = releaseReservations
+    }
+end
+
+local function validateSecurityConfig(raw)
+    if raw == nil then raw = NightShift.SecurityConfig or {} end
+    if type(raw) ~= 'table' then return fail('INVALID_CONFIG', 'security', 'security configuration must be a table') end
+    local allowed = { enabled = true, persistentCounters = true, maxBuckets = true, rateLimit = true, actionTokens = true }
+    for key in pairs(raw) do
+        if not allowed[key] then return fail('INVALID_CONFIG', 'security.' .. tostring(key), 'security field is not allowlisted') end
+    end
+    local enabled, enabledError = booleanValue(raw.enabled, 'security.enabled', true)
+    if enabled == nil then return nil, enabledError end
+    local persistent, persistentError = booleanValue(raw.persistentCounters, 'security.persistentCounters', false)
+    if persistent == nil then return nil, persistentError end
+    local maxBuckets = raw.maxBuckets == nil and 2048 or tonumber(raw.maxBuckets)
+    if not finite(maxBuckets) or maxBuckets < 64 or maxBuckets > 100000 or maxBuckets ~= math.floor(maxBuckets) then
+        return fail('INVALID_CONFIG', 'security.maxBuckets', 'security bucket limit is outside safe bounds')
+    end
+    local rate = raw.rateLimit == nil and {} or raw.rateLimit
+    if type(rate) ~= 'table' then return fail('INVALID_CONFIG', 'security.rateLimit', 'rate limit configuration must be a table') end
+    for key in pairs(rate) do
+        if key ~= 'enabled' and key ~= 'default' and key ~= 'actions' then
+            return fail('INVALID_CONFIG', 'security.rateLimit.' .. tostring(key), 'rate limit field is not allowlisted')
+        end
+    end
+    local rateEnabled, rateError = booleanValue(rate.enabled, 'security.rateLimit.enabled', true)
+    if rateEnabled == nil then return nil, rateError end
+    local function rule(rawRule, path, fallback)
+        rawRule = rawRule == nil and (fallback or {}) or rawRule
+        if type(rawRule) ~= 'table' then return fail('INVALID_CONFIG', path, 'rate rule must be a table') end
+        for key in pairs(rawRule) do
+            if key ~= 'capacity' and key ~= 'refillPerSecond' and key ~= 'cost' then
+                return fail('INVALID_CONFIG', path .. '.' .. tostring(key), 'rate rule field is not allowlisted')
+            end
+        end
+        local capacity = rawRule.capacity == nil and (fallback and fallback.capacity or 20) or tonumber(rawRule.capacity)
+        local refill = rawRule.refillPerSecond == nil and (fallback and fallback.refillPerSecond or 2) or tonumber(rawRule.refillPerSecond)
+        local cost = rawRule.cost == nil and (fallback and fallback.cost or 1) or tonumber(rawRule.cost)
+        if not finite(capacity) or capacity < 1 or capacity > 10000 or capacity ~= math.floor(capacity) then
+            return fail('INVALID_CONFIG', path .. '.capacity', 'rate capacity is outside safe bounds')
+        end
+        if not finite(refill) or refill <= 0 or refill > 1000 then
+            return fail('INVALID_CONFIG', path .. '.refillPerSecond', 'rate refill is outside safe bounds')
+        end
+        if not finite(cost) or cost <= 0 or cost > capacity then
+            return fail('INVALID_CONFIG', path .. '.cost', 'rate cost is outside safe bounds')
+        end
+        return { capacity = capacity, refillPerSecond = refill, cost = cost }
+    end
+    local defaultRule, defaultError = rule(rate.default, 'security.rateLimit.default', { capacity = 20, refillPerSecond = 2, cost = 1 })
+    if not defaultRule then return nil, defaultError end
+    local actionRules = rate.actions == nil and {} or rate.actions
+    if type(actionRules) ~= 'table' then return fail('INVALID_CONFIG', 'security.rateLimit.actions', 'rate action rules must be a table') end
+    local normalizedActions, actionCount = {}, 0
+    for action, rawRule in pairs(actionRules) do
+        actionCount = actionCount + 1
+        if actionCount > 128 or not token(action, 64) then
+            return fail('INVALID_CONFIG', 'security.rateLimit.actions.' .. tostring(action), 'rate action name is invalid')
+        end
+        local normalizedRule, ruleError = rule(rawRule, 'security.rateLimit.actions.' .. tostring(action), defaultRule)
+        if not normalizedRule then return nil, ruleError end
+        normalizedActions[action] = normalizedRule
+    end
+    local actionTokenConfig = raw.actionTokens == nil and {} or raw.actionTokens
+    if type(actionTokenConfig) ~= 'table' then return fail('INVALID_CONFIG', 'security.actionTokens', 'action token configuration must be a table') end
+    for key in pairs(actionTokenConfig) do
+        if key ~= 'enabled' and key ~= 'enforce' and key ~= 'ttlSeconds' and key ~= 'maxActive' and key ~= 'maxTokenLength' then
+            return fail('INVALID_CONFIG', 'security.actionTokens.' .. tostring(key), 'action token field is not allowlisted')
+        end
+    end
+    local tokenEnabled, tokenEnabledError = booleanValue(actionTokenConfig.enabled, 'security.actionTokens.enabled', true)
+    if tokenEnabled == nil then return nil, tokenEnabledError end
+    local enforce, enforceError = booleanValue(actionTokenConfig.enforce, 'security.actionTokens.enforce', false)
+    if enforce == nil then return nil, enforceError end
+    local ttl = actionTokenConfig.ttlSeconds == nil and 90 or tonumber(actionTokenConfig.ttlSeconds)
+    if not finite(ttl) or ttl < 1 or ttl > 3600 or ttl ~= math.floor(ttl) then
+        return fail('INVALID_CONFIG', 'security.actionTokens.ttlSeconds', 'action token TTL is outside safe bounds')
+    end
+    local maxActive = actionTokenConfig.maxActive == nil and 4096 or tonumber(actionTokenConfig.maxActive)
+    if not finite(maxActive) or maxActive < 1 or maxActive > 100000 or maxActive ~= math.floor(maxActive) then
+        return fail('INVALID_CONFIG', 'security.actionTokens.maxActive', 'action token capacity is outside safe bounds')
+    end
+    local maxTokenLength = actionTokenConfig.maxTokenLength == nil and 192 or tonumber(actionTokenConfig.maxTokenLength)
+    if not finite(maxTokenLength) or maxTokenLength < 64 or maxTokenLength > 512 or maxTokenLength ~= math.floor(maxTokenLength) then
+        return fail('INVALID_CONFIG', 'security.actionTokens.maxTokenLength', 'action token length is outside safe bounds')
+    end
+    return {
+        enabled = enabled, persistentCounters = persistent, maxBuckets = maxBuckets,
+        rateLimit = { enabled = rateEnabled, default = defaultRule, actions = normalizedActions },
+        actionTokens = {
+            enabled = tokenEnabled, enforce = enforce, ttlSeconds = ttl,
+            maxActive = maxActive, maxTokenLength = maxTokenLength
+        }
+    }
+end
+
+local function boundedNumber(raw, name, fallback, minimum, maximum, whole)
+    local key = name:match('%.([^%.]+)$') or name
+    local value = raw[key]
+    value = value == nil and fallback or tonumber(value)
+    if not finite(value) or value < minimum or value > maximum or (whole and value ~= math.floor(value)) then
+        local _, errorResult = fail('INVALID_CONFIG', name, 'value is outside safe bounds')
+        return nil, errorResult
+    end
+    return value
+end
+
+local function validateHeatConfig(raw)
+    if raw == nil then raw = NightShift.HeatConfig or {} end
+    if type(raw) ~= 'table' then return fail('INVALID_CONFIG', 'heat', 'heat configuration must be a table') end
+    local allowed = {
+        enabled=true, playerEnabled=true, min=true, max=true, playerIncrement=true,
+        districtIncrement=true, decayIntervalSeconds=true, playerDecay=true,
+        districtDecay=true, maxEventKeys=true, eventIncrements=true, decay=true
+    }
+    for key in pairs(raw) do
+        if not allowed[key] then return fail('INVALID_CONFIG', 'heat.' .. tostring(key), 'heat field is not allowlisted') end
+    end
+    local enabled, enabledError = booleanValue(raw.enabled, 'heat.enabled', true)
+    if enabled == nil then return nil, enabledError end
+    local playerEnabled, playerError = booleanValue(raw.playerEnabled, 'heat.playerEnabled', true)
+    if playerEnabled == nil then return nil, playerError end
+    local minimum, minimumError = boundedNumber(raw, 'heat.min', 0, 0, 100)
+    if minimum == nil then return nil, minimumError end
+    local maximum, maximumError = boundedNumber(raw, 'heat.max', 100, 0, 100)
+    if maximum == nil then return nil, maximumError end
+    if maximum <= minimum then return fail('INVALID_CONFIG', 'heat.max', 'maximum must be above minimum') end
+    local legacyDecay = raw.decay
+    local playerIncrement, incrementError = boundedNumber(raw, 'heat.playerIncrement', 5, 0, 100)
+    if playerIncrement == nil then return nil, incrementError end
+    local districtIncrement, districtError = boundedNumber(raw, 'heat.districtIncrement', 5, 0, 100)
+    if districtIncrement == nil then return nil, districtError end
+    local interval, intervalError = boundedNumber(raw, 'heat.decayIntervalSeconds', 300, 1, 86400, true)
+    if interval == nil then return nil, intervalError end
+    local playerDecay, playerDecayError = boundedNumber(raw, 'heat.playerDecay', legacyDecay == nil and 2 or legacyDecay, 0, 100)
+    if playerDecay == nil then return nil, playerDecayError end
+    local districtDecay, districtDecayError = boundedNumber(raw, 'heat.districtDecay', legacyDecay == nil and 3 or legacyDecay, 0, 100)
+    if districtDecay == nil then return nil, districtDecayError end
+    local maxEventKeys, maxKeysError = boundedNumber(raw, 'heat.maxEventKeys', 2048, 1, 100000, true)
+    if maxEventKeys == nil then return nil, maxKeysError end
+    local increments = raw.eventIncrements == nil and {} or raw.eventIncrements
+    if type(increments) ~= 'table' then return fail('INVALID_CONFIG', 'heat.eventIncrements', 'event increments must be a table') end
+    local normalizedIncrements = {}
+    for eventType, values in pairs(increments) do
+        if not token(eventType, 96) or type(values) ~= 'table' then
+            return fail('INVALID_CONFIG', 'heat.eventIncrements.' .. tostring(eventType), 'event increment entry is invalid')
+        end
+        local playerAmount, playerAmountError = boundedNumber(values, 'player', nil, 0, 100)
+        if values.player ~= nil and playerAmount == nil then return nil, playerAmountError end
+        local districtAmount, districtAmountError = boundedNumber(values, 'district', nil, 0, 100)
+        if values.district ~= nil and districtAmount == nil then return nil, districtAmountError end
+        normalizedIncrements[tostring(eventType)] = { player = playerAmount, district = districtAmount }
+    end
+    return {
+        enabled = enabled, playerEnabled = playerEnabled, min = minimum, max = maximum,
+        playerIncrement = playerIncrement, districtIncrement = districtIncrement,
+        decayIntervalSeconds = interval, playerDecay = playerDecay, districtDecay = districtDecay,
+        maxEventKeys = maxEventKeys, eventIncrements = normalizedIncrements,
+        decay = legacyDecay == nil and districtDecay or legacyDecay
+    }
+end
+
+local function validateViceConfig(raw)
+    if raw == nil then raw = NightShift.ViceConfig or {} end
+    if type(raw) ~= 'table' then return fail('INVALID_CONFIG', 'vice', 'vice configuration must be a table') end
+    local allowed = {
+        enabled=true, riskThreshold=true, dispatchThreshold=true,
+        districtPressureWeight=true, archetypeWeight=true, bookingWeight=true, dispatch=true
+    }
+    for key in pairs(raw) do
+        if not allowed[key] then return fail('INVALID_CONFIG', 'vice.' .. tostring(key), 'vice field is not allowlisted') end
+    end
+    local enabled, enabledError = booleanValue(raw.enabled, 'vice.enabled', false)
+    if enabled == nil then return nil, enabledError end
+    local risk, riskError = boundedNumber(raw, 'vice.riskThreshold', 60, 0, 100)
+    if risk == nil then return nil, riskError end
+    local dispatchThreshold, thresholdError = boundedNumber(raw, 'vice.dispatchThreshold', 80, 0, 100)
+    if dispatchThreshold == nil then return nil, thresholdError end
+    local pressure, pressureError = boundedNumber(raw, 'vice.districtPressureWeight', 0.5, 0, 1)
+    if pressure == nil then return nil, pressureError end
+    local archetype, archetypeError = boundedNumber(raw, 'vice.archetypeWeight', 0.3, 0, 1)
+    if archetype == nil then return nil, archetypeError end
+    local booking, bookingError = boundedNumber(raw, 'vice.bookingWeight', 0.2, 0, 1)
+    if booking == nil then return nil, bookingError end
+    local dispatch = raw.dispatch == nil and {} or raw.dispatch
+    if type(dispatch) ~= 'table' then return fail('INVALID_CONFIG', 'vice.dispatch', 'dispatch configuration must be a table') end
+    for key in pairs(dispatch) do
+        if key ~= 'enabled' and key ~= 'requireThreshold' then
+            return fail('INVALID_CONFIG', 'vice.dispatch.' .. tostring(key), 'vice dispatch field is not allowlisted')
+        end
+    end
+    local dispatchEnabled, dispatchError = booleanValue(dispatch.enabled, 'vice.dispatch.enabled', false)
+    if dispatchEnabled == nil then return nil, dispatchError end
+    local requireThreshold, requireError = booleanValue(dispatch.requireThreshold, 'vice.dispatch.requireThreshold', true)
+    if requireThreshold == nil then return nil, requireError end
+    return {
+        enabled = enabled, riskThreshold = risk, dispatchThreshold = dispatchThreshold,
+        districtPressureWeight = pressure, archetypeWeight = archetype, bookingWeight = booking,
+        dispatch = { enabled = dispatchEnabled, requireThreshold = requireThreshold }
+    }
+end
+
+local function validateDemandHeatFeedbackConfig(raw)
+    if raw == nil then raw = NightShift.DemandHeatFeedbackConfig or {} end
+    if type(raw) ~= 'table' then return fail('INVALID_CONFIG', 'demandHeatFeedback', 'feedback configuration must be a table') end
+    local allowed = {
+        enabled=true, streetPressureThreshold=true, streetOpportunityPenalty=true,
+        privateAvailabilityModifier=true, pricingDemandWeight=true, pricingHeatWeight=true,
+        pricingOversupplyPenalty=true, minMultiplier=true, maxMultiplier=true
+    }
+    for key in pairs(raw) do
+        if not allowed[key] then return fail('INVALID_CONFIG', 'demandHeatFeedback.' .. tostring(key), 'feedback field is not allowlisted') end
+    end
+    local enabled, enabledError = booleanValue(raw.enabled, 'demandHeatFeedback.enabled', true)
+    if enabled == nil then return nil, enabledError end
+    local threshold, thresholdError = boundedNumber(raw, 'demandHeatFeedback.streetPressureThreshold', 70, 0, 100)
+    if threshold == nil then return nil, thresholdError end
+    local street, streetError = boundedNumber(raw, 'demandHeatFeedback.streetOpportunityPenalty', 0.6, 0, 1)
+    if street == nil then return nil, streetError end
+    local private, privateError = boundedNumber(raw, 'demandHeatFeedback.privateAvailabilityModifier', 0.35, 0, 1)
+    if private == nil then return nil, privateError end
+    local demand, demandError = boundedNumber(raw, 'demandHeatFeedback.pricingDemandWeight', 0.2, 0, 1)
+    if demand == nil then return nil, demandError end
+    local heat, heatError = boundedNumber(raw, 'demandHeatFeedback.pricingHeatWeight', 0.15, 0, 1)
+    if heat == nil then return nil, heatError end
+    local oversupply, oversupplyError = boundedNumber(raw, 'demandHeatFeedback.pricingOversupplyPenalty', 0.3, 0, 1)
+    if oversupply == nil then return nil, oversupplyError end
+    local minimum, minimumError = boundedNumber(raw, 'demandHeatFeedback.minMultiplier', 0.25, 0.05, 1)
+    if minimum == nil then return nil, minimumError end
+    local maximum, maximumError = boundedNumber(raw, 'demandHeatFeedback.maxMultiplier', 1.75, 1, 5)
+    if maximum == nil then return nil, maximumError end
+    if minimum > maximum then return fail('INVALID_CONFIG', 'demandHeatFeedback.maxMultiplier', 'maximum must not be below minimum') end
+    return {
+        enabled = enabled, streetPressureThreshold = threshold,
+        streetOpportunityPenalty = street, privateAvailabilityModifier = private,
+        pricingDemandWeight = demand, pricingHeatWeight = heat,
+        pricingOversupplyPenalty = oversupply, minMultiplier = minimum, maxMultiplier = maximum
+    }
+end
+
 function V.validateConfig(input, options)
     options=options or {}; if input==nil then input=NightShift.DefaultConfig end; if type(input)~='table' then return fail('INVALID_CONFIG','config','configuration must be a table') end
     local out=copy(input); local raw=rawget(input,'provider'); if raw==nil then raw=rawget(input,'providerSelection') end; local provider=raw==nil and {} or raw
@@ -542,10 +982,16 @@ function V.validateConfig(input, options)
     local pricing, pricingError = validatePricing(rawget(input, 'pricing')); if not pricing then return nil, pricingError end; out.pricing = pricing
     local cancellation, cancellationError = validateCancellation(rawget(input, 'cancellation')); if not cancellation then return nil, cancellationError end; out.cancellation = cancellation
     local profiles,pr=ids(input.npcProfiles==nil and {} or input.npcProfiles,'npcProfiles','NPC profile'); if not profiles then return nil,pr end; local allowed={id=true,availability=true,traits=true,tags=true,displayName=true}; for i,p in ipairs(profiles) do for k,v in pairs(p) do if not allowed[k] then return fail('INVALID_CONFIG','npcProfiles['..i..'].'..tostring(k),'NPC profile field is not abstract/allowlisted') end; if (k=='availability' or k=='displayName') and (not text(v) or #v>80) then return fail('INVALID_CONFIG','npcProfiles['..i..'].'..tostring(k),'NPC profile scalar is invalid') end; if k=='traits' or k=='tags' then local ok,e=array(v,'npcProfiles['..i..'].'..tostring(k),'NPC profile list'); if not ok then return nil,e end; for j,item in ipairs(v) do if not text(item) or #item>40 then return fail('INVALID_CONFIG','npcProfiles['..i..'].'..tostring(k)..'['..j..']','NPC profile list value is invalid') end end end end end; out.npcProfiles=profiles
-    local function bounded(v,p,d,max) v=v==nil and d or v; if not finite(v) or v<0 or v>max then return fail('INVALID_CONFIG',p,'value is outside safe bounds') end; return v end
-    local function section(name)
-        local s=rawget(input,name); if s==nil then s={} end; if type(s)~='table' then return fail('INVALID_CONFIG',name,name..' must be a table') end; local mn,e=bounded(s.min,name..'.min',0,100); if mn==nil then return nil,e end; local mx; mx,e=bounded(s.max,name..'.max',100,100); if mx==nil then return nil,e end; if mx<mn then return fail('INVALID_CONFIG',name..'.max','maximum must not be below minimum') end; local r=copy(s); r.min,r.max=mn,mx; if name=='demand' then r.window,e=bounded(s.window,name..'.window',0,86400); if r.window==nil then return nil,e end else r.decay,e=bounded(s.decay,name..'.decay',0,100); if r.decay==nil then return nil,e end end; return r
-    end
-    local demand, demandError = validateDemandConfig(rawget(input, 'demand')); if not demand then return nil, demandError end; local heat; heat,demandError=section('heat'); if not heat then return nil,demandError end; out.demand,out.heat=demand,heat; return out
+    local demand, demandError = validateDemandConfig(rawget(input, 'demand')); if not demand then return nil, demandError end
+    local heat, heatError = validateHeatConfig(rawget(input, 'heat')); if not heat then return nil, heatError end
+    local vice, viceError = validateViceConfig(rawget(input, 'vice')); if not vice then return nil, viceError end
+    local feedback, feedbackError = validateDemandHeatFeedbackConfig(rawget(input, 'demandHeatFeedback')); if not feedback then return nil, feedbackError end
+    local reputation, reputationError = validateReputationConfig(rawget(input, 'reputation')); if not reputation then return nil, reputationError end
+    local scheduling, schedulingError = validateSchedulingConfig(rawget(input, 'scheduling')); if not scheduling then return nil, schedulingError end
+    local recovery, recoveryError = validateRecoveryConfig(rawget(input, 'recovery')); if not recovery then return nil, recoveryError end
+    local security, securityError = validateSecurityConfig(rawget(input, 'security')); if not security then return nil, securityError end
+    out.demand, out.heat, out.vice, out.demandHeatFeedback = demand, heat, vice, feedback
+    out.reputation, out.scheduling, out.recovery, out.security = reputation, scheduling, recovery, security
+    return out
 end
 V.copy=copy; NightShift.Config=NightShift.Config or {validate=V.validateConfig}

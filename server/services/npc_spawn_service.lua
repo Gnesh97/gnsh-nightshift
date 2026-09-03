@@ -35,6 +35,14 @@ local function source(value)
     return value
 end
 
+local function handleMatches(expected, observed)
+    local expectedNumber, observedNumber = tonumber(expected), tonumber(observed)
+    if expectedNumber ~= nil or observedNumber ~= nil then
+        return expectedNumber ~= nil and observedNumber ~= nil and expectedNumber == observedNumber
+    end
+    return expected == observed
+end
+
 local function invalid(message, details)
     return Result.err(Codes.NPC_SPAWN_INVALID, message, details)
 end
@@ -98,6 +106,22 @@ local function modelValue(resolver, plan, sourceValue)
     return type(value) == 'string' and value or value
 end
 
+local function streamingDistrict(travel)
+    if type(travel) ~= 'table' then return 'global' end
+    local resolved = type(travel.resolvedDestination) == 'table' and travel.resolvedDestination or {}
+    local destination = type(travel.destination) == 'table' and travel.destination or {}
+    local origin = type(travel.origin) == 'table' and travel.origin or {}
+    local value = resolved.district or destination.district or origin.district or travel.district
+    return token(value, 96) and value or 'global'
+end
+
+local function releaseStreamingLease(service, playerSource, profileKey)
+    local budget = service._streamingBudget
+    if type(budget) == 'table' and type(budget.release) == 'function' then
+        pcall(budget.release, budget, playerSource, profileKey)
+    end
+end
+
 function Service.new(options)
     options = options or {}
     if type(options.travelService) ~= 'table' or type(options.travelService.get) ~= 'function' then
@@ -108,6 +132,15 @@ function Service.new(options)
     end
     local config = options.config or Config
     local allowlist = options.modelAllowlist or config.modelAllowlist or {}
+    if options.streamingBudget ~= nil and
+        (type(options.streamingBudget) ~= 'table' or type(options.streamingBudget.request) ~= 'function') then
+        return nil, invalid('NPC spawn streaming budget is invalid')
+    end
+    if options.stateBagPolicy ~= nil and
+        (type(options.stateBagPolicy) ~= 'table' or type(options.stateBagPolicy.fromLogical) ~= 'function'
+            or type(options.stateBagPolicy.write) ~= 'function') then
+        return nil, invalid('NPC spawn state bag policy is invalid')
+    end
     return setmetatable({
         _travel = options.travelService,
         _registry = options.entityRegistry,
@@ -118,7 +151,9 @@ function Service.new(options)
         _modelResolver = options.modelResolver,
         _safeSpawnResolver = options.safeSpawnResolver or options.spawnResolver,
         _appearanceResolver = options.appearanceResolver,
-        _createServerEntity = options.createServerEntity
+        _createServerEntity = options.createServerEntity,
+        _streamingBudget = options.streamingBudget,
+        _stateBagPolicy = options.stateBagPolicy
     }, Service)
 end
 
@@ -187,23 +222,61 @@ function Service:request(playerSource, request)
         travelKey = travel.travelKey, bookingId = travel.bookingId, owner = playerSource,
         state = state, model = model, appearanceProfileRef = appearanceProfileRef
     }
+    local streamingLease
+    if self._streamingBudget ~= nil then
+        local leaseResult = self._streamingBudget:request(
+            playerSource, travel.profileKey, streamingDistrict(travel))
+        if not leaseResult.ok then return leaseResult end
+        streamingLease = leaseResult.value
+    end
     if type(self._createServerEntity) == 'function' then
         local ok, result = pcall(self._createServerEntity, {
             source = playerSource, profileKey = travel.profileKey, travelKey = travel.travelKey,
             bookingId = travel.bookingId, model = model, candidate = copy(candidate),
             appearanceProfileRef = appearanceProfileRef, serverOwned = true
         })
-        if not ok then return Result.err(Codes.NPC_SPAWN_CONTEXT_REQUIRED, 'server NPC entity creation failed') end
+        if not ok then
+            releaseStreamingLease(self, playerSource, travel.profileKey)
+            return Result.err(Codes.NPC_SPAWN_CONTEXT_REQUIRED, 'server NPC entity creation failed')
+        end
         local value, createError = unwrap(result, Codes.NPC_SPAWN_CONTEXT_REQUIRED)
-        if not value then return createError end
-        if type(value) ~= 'table' then return Result.err(Codes.NPC_SPAWN_CONTEXT_REQUIRED, 'server entity creator returned no entity') end
+        if not value then
+            releaseStreamingLease(self, playerSource, travel.profileKey)
+            return createError
+        end
+        if type(value) ~= 'table' then
+            releaseStreamingLease(self, playerSource, travel.profileKey)
+            return Result.err(Codes.NPC_SPAWN_CONTEXT_REQUIRED, 'server entity creator returned no entity')
+        end
         entity, networkId = value.entity, value.networkId
-        if entity == nil then return Result.err(Codes.NPC_SPAWN_CONTEXT_REQUIRED, 'server entity creator returned no entity handle') end
+        if entity == nil then
+            releaseStreamingLease(self, playerSource, travel.profileKey)
+            return Result.err(Codes.NPC_SPAWN_CONTEXT_REQUIRED, 'server entity creator returned no entity handle')
+        end
         registryMetadata.entity, registryMetadata.networkId, registryMetadata.state = entity, networkId, 'BOUND'
     end
     local registered = self._registry:register(travel.profileKey, registryMetadata)
-    if not registered.ok then return registered end
+    if not registered.ok then
+        releaseStreamingLease(self, playerSource, travel.profileKey)
+        return registered
+    end
     local binding = registered.value
+    local stateBag
+    if self._stateBagPolicy and type(self._stateBagPolicy.write) == 'function' and binding.entity ~= nil then
+        local metadata = self._stateBagPolicy:fromLogical(binding)
+        if not metadata.ok then
+            self._registry:unregister(travel.profileKey, binding.generationToken)
+            releaseStreamingLease(self, playerSource, travel.profileKey)
+            return metadata
+        end
+        local written = self._stateBagPolicy:write(binding.entity, metadata.value)
+        if not written.ok and written.error.code ~= Codes.STATE_BAG_UNAVAILABLE then
+            self._registry:unregister(travel.profileKey, binding.generationToken)
+            releaseStreamingLease(self, playerSource, travel.profileKey)
+            return written
+        end
+        if written.ok then stateBag = written.value end
+    end
     return Result.ok({
         serverOwned = true,
         spawnKey = binding.generationToken,
@@ -216,7 +289,9 @@ function Service:request(playerSource, request)
         appearanceProfileRef = appearanceProfileRef,
         candidate = copy(candidate),
         entity = entity or binding.entity,
-        networkId = networkId or binding.networkId
+        networkId = networkId or binding.networkId,
+        streamingLease = copy(streamingLease),
+        stateBag = copy(stateBag)
     })
 end
 
@@ -228,6 +303,41 @@ function Service:confirmSpawn(playerSource, payload)
     local allowed = { profileKey = true, travelKey = true, bookingId = true, generationToken = true, entity = true, networkId = true }
     for key in pairs(payload) do if not allowed[key] then return Result.err(Codes.NPC_SPAWN_UNAUTHORIZED, 'spawn confirmation contains an untrusted field', { field = tostring(key) }) end end
     if not token(payload.profileKey, 160) or not token(payload.generationToken, 240) then return invalid('NPC spawn confirmation references are invalid') end
+    local existingResult = self._registry:get(payload.profileKey)
+    if type(existingResult) == 'table' and existingResult.ok == true and type(existingResult.value) == 'table' then
+        local existing = existingResult.value
+        if existing.state == 'DELETED' then
+            return Result.err(Codes.ENTITY_GENERATION_MISMATCH, 'NPC entity mapping is deleted')
+        end
+        -- A server-created entity is authoritative.  The client may report
+        -- the same handle for observability, but it can never replace or
+        -- augment the server binding with a forged physical entity/network ID.
+        if existing.entity ~= nil then
+            if payload.entity ~= nil and not handleMatches(existing.entity, payload.entity) then
+                return Result.err(Codes.ENTITY_GENERATION_MISMATCH, 'server-owned NPC entity handle does not match')
+            end
+            if payload.networkId ~= nil then
+                if existing.networkId == nil or not handleMatches(existing.networkId, payload.networkId) then
+                    return Result.err(Codes.ENTITY_GENERATION_MISMATCH, 'server-owned NPC network handle does not match')
+                end
+            end
+            local validated = self._registry:validate(payload.profileKey, payload.generationToken, {
+                travelKey = payload.travelKey, bookingId = payload.bookingId, owner = playerSource,
+                entity = payload.entity, networkId = payload.networkId
+            })
+            if not validated.ok then return validated end
+            return Result.ok({
+                profileKey = existing.profileKey,
+                travelKey = existing.travelKey,
+                bookingId = existing.bookingId,
+                generation = existing.generation,
+                generationToken = existing.generationToken,
+                entity = existing.entity,
+                networkId = existing.networkId,
+                serverOwned = true
+            }, { observed = true })
+        end
+    end
     local validated = self._registry:validate(payload.profileKey, payload.generationToken, {
         travelKey = payload.travelKey, bookingId = payload.bookingId, owner = playerSource
     })
@@ -246,6 +356,17 @@ function Service:confirmSpawn(playerSource, payload)
         networkId = bound.value.networkId,
         serverOwned = true
     })
+end
+
+function Service:release(playerSource, profileKey)
+    playerSource = source(playerSource)
+    if not playerSource or not token(profileKey, 160) then
+        return invalid('NPC streaming release reference is invalid')
+    end
+    if self._streamingBudget == nil then
+        return Result.ok({ released = false, bypassed = true })
+    end
+    return self._streamingBudget:release(playerSource, profileKey)
 end
 
 NightShift.NpcSpawnService = Service

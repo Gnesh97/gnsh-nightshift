@@ -268,7 +268,16 @@ Migrations.DefinitionFiles = Migrations.DefinitionFiles or {
     '011_booking_core.sql',
     '012_pricing_snapshots.sql',
     '013_location_resolver.sql',
-    '014_npc_marketplace.sql'
+    '014_npc_marketplace.sql',
+    '015_reputation.sql',
+    '016_reputation_compat.sql',
+    '017_scheduling.sql',
+    '018_blacklist.sql',
+    '019_agencies.sql',
+    '020_venues.sql',
+    '021_settlement_commission_snapshots.sql',
+    '022_audit.sql',
+    '023_idempotency.sql'
 }
 Migrations.checksum = checksum
 Migrations.Runner = Runner

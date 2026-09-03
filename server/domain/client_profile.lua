@@ -80,6 +80,8 @@ local function normalize(values)
     if completed == nil or cancelled == nil or noShows == nil then return nil, profileError('client profile counters must be non-negative integers') end
     local risk = score(values.depositRiskScore or values.deposit_risk_score, 0)
     if risk == nil then return nil, profileError('client deposit risk score must be an integer from 0 to 100') end
+    local reliability = score(values.reliability, 50)
+    if reliability == nil then return nil, profileError('client reliability must be an integer from 0 to 100') end
     local displayName = alias(values.displayName or values.display_name or values.alias, values.characterName)
     local locale = cleanText(values.locale, 16) or 'en'
     if not locale:match('^[A-Za-z][A-Za-z0-9_%-]*$') then return nil, profileError('client profile locale is invalid') end
@@ -104,6 +106,7 @@ local function normalize(values)
         noShowBookings = noShows,
         noShows = noShows,
         rating = ratingValue,
+        reliability = reliability,
         tier = tier:lower(),
         depositRiskScore = risk,
         depositRiskReason = depositRiskReason,
@@ -140,6 +143,7 @@ function ClientProfile.apply(profile, changes)
         cancelledBookings = 'cancelledBookings', cancelled_bookings = 'cancelledBookings',
         noShowBookings = 'noShowBookings', no_show_bookings = 'noShowBookings', noShows = 'noShowBookings', no_shows = 'noShowBookings',
         rating = 'rating', tier = 'tier', depositRiskScore = 'depositRiskScore',
+        reliability = 'reliability',
         deposit_risk_score = 'depositRiskScore', depositRiskReason = 'depositRiskReason',
         deposit_risk_reason = 'depositRiskReason', lastActiveAt = 'lastActiveAt', last_active_at = 'lastActiveAt'
     }
@@ -162,6 +166,7 @@ function ClientProfile.toRow(profile)
         cancelled_bookings = value.cancelledBookings,
         no_show_bookings = value.noShowBookings,
         rating = value.rating,
+        reliability = value.reliability,
         tier = value.tier,
         deposit_risk_score = value.depositRiskScore
     }

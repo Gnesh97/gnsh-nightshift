@@ -126,6 +126,204 @@ function Repository:findAll(options)
     return self._base:findAll(options)
 end
 
+local function normalizedStatuses(values)
+    if values == nil then return nil end
+    if type(values) ~= 'table' or #values == 0 or #values > 16 then return nil, invalid('booking status filter is invalid') end
+    local output = {}
+    for index, value in ipairs(values) do
+        if type(value) ~= 'string' then return nil, invalid('booking status filter is invalid', { index = index }) end
+        local status = value:upper()
+        if not Domain.statuses[status] or status:match('^[A-Z_]+$') == nil then return nil, invalid('booking status filter is invalid', { index = index }) end
+        output[index] = status
+    end
+    return output
+end
+
+function Repository:findForClient(client, options)
+    if type(client) ~= 'table' then return invalid('booking client scope is invalid') end
+    options = options or {}
+    if type(options) ~= 'table' then return invalid('booking client query options must be a table') end
+
+    local rawProfileId = client.clientProfileId or client.profileId
+    local profileId = rawProfileId == nil and nil or integer(rawProfileId, 1, 2147483647)
+    if rawProfileId ~= nil and not profileId then return invalid('booking client profile ID is invalid') end
+    local clientRef = client.clientRef or client.identityKey or client.key
+    if clientRef ~= nil and not text(clientRef, 160) then return invalid('booking client reference is invalid') end
+    if profileId == nil and clientRef == nil then return invalid('booking client scope requires a profile ID or reference') end
+
+    local limit = options.limit == nil and 50 or integer(options.limit, 1, 100)
+    local offset = options.offset == nil and 0 or integer(options.offset, 0)
+    if not limit then return invalid('repository limit is invalid') end
+    if not offset then return invalid('repository offset is invalid') end
+    local order = options.order == nil and 'ASC' or type(options.order) == 'string' and options.order:upper() or nil
+    if order ~= 'ASC' and order ~= 'DESC' then return invalid('booking query order is invalid') end
+    local orderBy = options.orderBy == nil and 'scheduled' or options.orderBy
+    if orderBy ~= 'scheduled' and orderBy ~= 'history' then return invalid('booking query order field is invalid') end
+    local statuses, statusError = normalizedStatuses(options.statuses)
+    if statusError then return statusError end
+
+    local predicates, predicateParams = {}, {}
+    if profileId ~= nil then
+        predicates[#predicates + 1] = 'client_profile_id = ?'
+        predicateParams[#predicateParams + 1] = profileId
+    end
+    if clientRef ~= nil then
+        predicates[#predicates + 1] = '(client_type = ? AND client_ref = ?)'
+        predicateParams[#predicateParams + 1] = 'PLAYER'
+        predicateParams[#predicateParams + 1] = clientRef
+    end
+    local scope = #predicates == 1 and predicates[1] or '(' .. table.concat(predicates, ' OR ') .. ')'
+    local where = { scope }
+    local whereParams = copy(predicateParams)
+    if statuses then
+        local placeholders = {}
+        for _, status in ipairs(statuses) do
+            placeholders[#placeholders + 1] = '?'
+            whereParams[#whereParams + 1] = status
+        end
+        where[#where + 1] = 'status IN (' .. table.concat(placeholders, ', ') .. ')'
+    end
+    local selectList, selectError = self._base:_selectList()
+    if not selectList then return selectError end
+    local sortColumn = orderBy == 'history' and 'COALESCE(completed_at, updated_at, created_at)' or 'COALESCE(scheduled_at, created_at)'
+    local whereSql = table.concat(where, ' AND ')
+    local listParams = copy(whereParams)
+    listParams[#listParams + 1] = limit
+    listParams[#listParams + 1] = offset
+    local sql = ('SELECT %s FROM %s WHERE %s ORDER BY %s %s, id %s LIMIT ? OFFSET ?'):format(selectList, self._table, whereSql, sortColumn, order, order)
+    local result = self._db:query(sql, listParams)
+    if type(result) ~= 'table' or not result.ok then return result end
+    local rows = result.value or {}
+    if type(rows) ~= 'table' then return Result.err(Codes.REPOSITORY_STATE_UNKNOWN, 'booking query rows are invalid') end
+    local mapped = {}
+    for index, row in ipairs(rows) do
+        local value, mapResult = self._base:_map(row)
+        if not value then return mapResult end
+        mapped[index] = value
+    end
+
+    local countSql = ('SELECT COUNT(*) AS total FROM %s WHERE %s'):format(self._table, whereSql)
+    local countResult = self._db:scalar(countSql, whereParams)
+    if type(countResult) ~= 'table' or not countResult.ok then return countResult end
+    local totalValue = countResult.value
+    if type(totalValue) == 'table' then totalValue = totalValue.total or totalValue[1] end
+    local total = tonumber(totalValue)
+    if not total or total < 0 or math.floor(total) ~= total then return Result.err(Codes.REPOSITORY_STATE_UNKNOWN, 'booking query count is invalid') end
+    return Result.ok({ items = mapped, total = total, limit = limit, offset = offset }, { order = order, orderBy = orderBy })
+end
+
+Repository.findByClient = Repository.findForClient
+
+local function mapRows(repository, result, message)
+    if type(result) ~= 'table' or not result.ok then return result end
+    local rows = result.value or {}
+    if type(rows) ~= 'table' then return Result.err(Codes.REPOSITORY_STATE_UNKNOWN, message or 'booking query rows are invalid') end
+    local mapped = {}
+    for index, row in ipairs(rows) do
+        local value, mapResult = repository._base:_map(row)
+        if not value then return mapResult end
+        mapped[index] = value
+    end
+    return Result.ok(mapped)
+end
+
+local function dueOptions(options, field, defaultValue)
+    if options == nil then options = {} end
+    if type(options) ~= 'table' then return nil, invalid('booking due query options must be a table') end
+    local limit = options.limit == nil and 50 or integer(options.limit, 1, 100)
+    if not limit then return nil, invalid('repository limit is invalid') end
+    local seconds = options[field]
+    seconds = seconds == nil and defaultValue or integer(seconds, 0, 604800)
+    if seconds == nil then return nil, invalid(('booking %s is invalid'):format(field)) end
+    return { limit = limit, seconds = seconds }
+end
+
+local function queryEpoch(value, field)
+    value = tonumber(value)
+    if not value or value ~= value or value == math.huge or value == -math.huge or value < 0 then
+        return nil, invalid(field .. ' timestamp is invalid')
+    end
+    return math.floor(value)
+end
+
+function Repository:findDueScheduled(now, options)
+    local settings, settingsError = dueOptions(options, 'leadTimeSeconds', 0)
+    if not settings then return settingsError end
+    local epoch, epochError = queryEpoch(now == nil and os.time() or now, 'due')
+    if not epoch then return epochError end
+    local boundary, boundaryError = databaseTimestamp(epoch + settings.seconds, 'scheduledAt')
+    if not boundary then return boundaryError end
+    local selectList, selectError = self._base:_selectList()
+    if not selectList then return selectError end
+    local sql = ('SELECT %s FROM %s WHERE status = ? AND scheduled_at IS NOT NULL AND scheduled_at <= ? ORDER BY scheduled_at ASC, id ASC LIMIT ?'):format(selectList, self._table)
+    local result = self._db:query(sql, { 'SCHEDULED', boundary, settings.limit })
+    return mapRows(self, result, 'scheduled due query rows are invalid')
+end
+
+function Repository:findDueArrived(now, options)
+    local settings, settingsError = dueOptions(options, 'graceSeconds', 300)
+    if not settings then return settingsError end
+    local epoch, epochError = queryEpoch(now == nil and os.time() or now, 'due')
+    if not epoch then return epochError end
+    local cutoff = math.max(0, epoch - settings.seconds)
+    local boundary, boundaryError = databaseTimestamp(cutoff, 'arrival')
+    if not boundary then return boundaryError end
+    local selectList, selectError = self._base:_selectList()
+    if not selectList then return selectError end
+    local sql = ('SELECT %s FROM %s WHERE status = ? AND updated_at IS NOT NULL AND updated_at <= ? ORDER BY updated_at ASC, id ASC LIMIT ?'):format(selectList, self._table)
+    local result = self._db:query(sql, { 'ARRIVED', boundary, settings.limit })
+    return mapRows(self, result, 'arrived due query rows are invalid')
+end
+
+Repository.findDueNoShow = Repository.findDueArrived
+
+function Repository:findScheduleCandidates(booking, options)
+    if type(booking) ~= 'table' then return invalid('schedule candidate booking is invalid') end
+    options = options or {}
+    if type(options) ~= 'table' then return invalid('schedule candidate options must be a table') end
+    local workerRef = booking.workerRef
+    local locationRef = booking.locationRef
+    local hasWorker = text(workerRef, 160)
+    local hasLocation = text(locationRef, 160)
+    if not hasWorker and not hasLocation then return Result.ok({}) end
+    local limit = options.limit == nil and 100 or integer(options.limit, 1, 200)
+    if not limit then return invalid('schedule candidate limit is invalid') end
+    local predicates, parameters = {}, {}
+    if booking.id ~= nil then
+        local id = integer(booking.id, 1, 2147483647) or (text(booking.id, 160) and booking.id)
+        if id ~= nil then
+            predicates[#predicates + 1] = 'id <> ?'
+            parameters[#parameters + 1] = id
+        end
+    end
+    local statuses = { 'SCHEDULED', 'RESERVED', 'TRAVELLING', 'ARRIVED', 'ACTIVE' }
+    local placeholders = {}
+    for _, status in ipairs(statuses) do
+        placeholders[#placeholders + 1] = '?'
+        parameters[#parameters + 1] = status
+    end
+    predicates[#predicates + 1] = 'status IN (' .. table.concat(placeholders, ', ') .. ')'
+    local resources = {}
+    if hasWorker then
+        resources[#resources + 1] = '(worker_type = ? AND worker_ref = ?)'
+        parameters[#parameters + 1] = type(booking.workerType) == 'string' and booking.workerType:upper() or 'PLAYER'
+        parameters[#parameters + 1] = workerRef
+    end
+    if hasLocation then
+        resources[#resources + 1] = 'location_ref = ?'
+        parameters[#parameters + 1] = locationRef
+    end
+    predicates[#predicates + 1] = '(' .. table.concat(resources, ' OR ') .. ')'
+    local selectList, selectError = self._base:_selectList()
+    if not selectList then return selectError end
+    local sql = ('SELECT %s FROM %s WHERE %s ORDER BY scheduled_at ASC, id ASC LIMIT ?'):format(selectList, self._table, table.concat(predicates, ' AND '))
+    parameters[#parameters + 1] = limit
+    local result = self._db:query(sql, parameters)
+    return mapRows(self, result, 'schedule candidate query rows are invalid')
+end
+
+Repository.findForSchedule = Repository.findScheduleCandidates
+
 function Repository:findByIdempotencyKey(key)
     if not text(key, 128) then return invalid('booking idempotency key is invalid') end
     local selectList, selectError = self._base:_selectList()
@@ -150,6 +348,24 @@ function Repository:findByExternalReference(reference)
     local booking, mapResult = self._base:_map(result.value)
     if not booking then return mapResult end
     return Result.ok(booking, { externalReference = reference })
+end
+
+function Repository:findByQuoteId(quoteId)
+    if not text(quoteId, 128) then return invalid('booking quote ID is invalid') end
+    local selectList, selectError = self._base:_selectList()
+    if not selectList then return selectError end
+    -- A quote ID should be unique, but do not silently pick an arbitrary row
+    -- if legacy data or a missing DB constraint violates that invariant.
+    local sql = ('SELECT %s FROM %s WHERE quote_id = ? OR agreed_quote_id = ? LIMIT 2'):format(selectList, self._table)
+    local result = self._db:query(sql, { quoteId, quoteId })
+    if type(result) ~= 'table' or not result.ok then return result end
+    local rows = result.value or {}
+    if type(rows) ~= 'table' then return Result.err(Codes.REPOSITORY_STATE_UNKNOWN, 'booking quote lookup rows are invalid') end
+    if #rows == 0 then return Result.err(Codes.REPOSITORY_NOT_FOUND, 'booking was not found') end
+    if #rows > 1 then return Result.err(Codes.REPOSITORY_STATE_UNKNOWN, 'booking quote ID is not unique') end
+    local booking, mapResult = self._base:_map(rows[1])
+    if not booking then return mapResult end
+    return Result.ok(booking, { quoteId = quoteId })
 end
 
 function Repository:create(booking)

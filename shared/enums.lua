@@ -123,3 +123,17 @@ NightShift.Enums.NpcPriceClasses = NightShift.Enums.NpcPriceClasses or {
     [4] = true,
     [5] = true
 }
+
+NightShift.Enums.BlacklistScopes = NightShift.Enums.BlacklistScopes or {
+    PERSONAL = true,
+    AGENCY = true
+}
+
+NightShift.Enums.BlacklistReasons = NightShift.Enums.BlacklistReasons or {
+    SAFETY = true,
+    NO_SHOW = true,
+    DISPUTE = true,
+    HARASSMENT = true,
+    POLICY = true,
+    OTHER = true
+}

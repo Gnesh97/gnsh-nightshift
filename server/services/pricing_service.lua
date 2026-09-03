@@ -104,6 +104,18 @@ local function reputationKey(value)
     return 'NORMAL'
 end
 
+local function numericResolverValue(value)
+    if type(value) == 'table' then
+        if value.ok ~= nil then
+            value = value.ok == true and value.value or nil
+        end
+        if type(value) == 'table' then
+            value = value.pricingModifier or value.multiplier or value.factor or value.value
+        end
+    end
+    return finite(value)
+end
+
 function Service.new(options)
     options = options or {}
     local catalog = options.catalog or options.serviceCatalog
@@ -152,6 +164,7 @@ function Service.new(options)
             time = options.timeResolver,
             demand = options.demandResolver,
             reputation = options.reputationResolver,
+            pricingModifier = options.pricingModifierResolver or options.feedbackResolver,
             travelFee = options.travelFeeResolver,
             locationFee = options.locationFeeResolver
         },
@@ -223,6 +236,20 @@ function Service:quote(request)
     applyMultiplier('demand', demandKey(demand), 'demandModifiers')
     local reputation = self:_resolve('reputation', request, request.clientReputation or request.reputationTier or request.reputation)
     applyMultiplier('reputation', reputationKey(reputation), 'reputationModifiers')
+    local feedbackMultiplier = numericResolverValue(self:_resolve('pricingModifier', request, nil))
+    if feedbackMultiplier then
+        feedbackMultiplier = math.max(0.25, math.min(1.75, feedbackMultiplier))
+        if feedbackMultiplier ~= 1 then
+            local before = amount
+            amount = amount * feedbackMultiplier
+            lineItems[#lineItems + 1] = {
+                key = 'demandHeatFeedback',
+                label = 'demand/heat feedback',
+                multiplier = feedbackMultiplier,
+                amountMinor = round(amount - before)
+            }
+        end
+    end
     local travel = self:_resolve('travelFee', request, self._config.fees.travelMinor)
     local location = self:_resolve('locationFee', request, self._config.fees.locationMinor)
     travel, location = integer(travel, 0, 100000000000), integer(location, 0, 100000000000)

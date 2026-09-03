@@ -51,6 +51,42 @@ local function successful(value)
     return value ~= false and value ~= nil
 end
 
+local function normalizeSplit(value, amount)
+    if value == nil then return nil end
+    if type(value) ~= 'table' then return nil, invalid('settlement commission split must be a table') end
+    local input = value.allocations or value
+    if type(input) ~= 'table' then return nil, invalid('settlement commission allocations are required') end
+    local output, total = {}, 0
+    for _, item in ipairs(input) do
+        if type(item) ~= 'table' or not text(item.role, 24) then return nil, invalid('settlement commission role is invalid') end
+        local role = item.role:upper()
+        if role ~= 'WORKER' and role ~= 'AGENCY' and role ~= 'VENUE' then return nil, invalid('settlement commission role is unsupported') end
+        if output[role] then return nil, invalid('settlement commission role is duplicated') end
+        local percentage = tonumber(item.percentage)
+        local fixed = integer(item.amountMinor, 0, amount)
+        if percentage and (percentage < 0 or percentage > 100 or percentage ~= percentage) then return nil, invalid('settlement commission percentage is invalid') end
+        if not percentage and fixed == nil then return nil, invalid('settlement commission allocation needs percentage or amount') end
+        if percentage then total = total + percentage end
+        output[role] = { role = role, ref = text(item.ref, 160) and item.ref or nil, percentage = percentage, amountMinor = fixed }
+    end
+    if not output.WORKER then return nil, invalid('settlement commission split requires a worker allocation') end
+    if total > 100 then return nil, invalid('settlement commission percentages exceed 100') end
+    local allocated = 0
+    for _, item in pairs(output) do
+        if item.amountMinor == nil then
+            item.amountMinor = math.floor(amount * item.percentage / 100)
+        end
+        allocated = allocated + item.amountMinor
+    end
+    if allocated > amount then return nil, invalid('settlement commission allocations exceed payment') end
+    output.WORKER.amountMinor = output.WORKER.amountMinor + (amount - allocated)
+    local allocations = {}
+    for _, role in ipairs({ 'WORKER', 'AGENCY', 'VENUE' }) do
+        if output[role] then allocations[#allocations + 1] = copy(output[role]) end
+    end
+    return { version = 1, amountMinor = amount, allocations = allocations }
+end
+
 local function bookingId(value)
     if type(value) == 'table' then return value.id end
     return value
@@ -88,8 +124,48 @@ function Service.new(options)
         _payerResolver = options.payerResolver or options.payerSourceResolver,
         _payeeResolver = options.payeeResolver or options.payeeSourceResolver,
         _commissionHook = options.commissionHook or options.commissionResolver,
+        _splitResolver = options.commissionSplitResolver or options.settlementSplitResolver,
+        _timeline = options.timelineService or options.timeline,
+        _audit = options.auditService or options.audit,
         _settled = {}
     }, Service)
+end
+
+function Service:_recordAudit(actor, bookingOrId, result)
+    if type(self._audit) ~= 'table' or type(self._audit.record) ~= 'function' then return end
+    local source = type(actor) == 'table' and actor.source or actor
+    source = integer(source, 1)
+    local value = type(result) == 'table' and result.value or nil
+    local payment = type(value) == 'table' and value.payment or nil
+    local errorResult = type(result) == 'table' and (result.error or result) or nil
+    local status = type(result) == 'table' and result.ok == true and 'OK' or 'ERROR'
+    local metadata = {
+        status = type(value) == 'table' and value.status or nil,
+        amountMinor = type(payment) == 'table' and payment.amountMinor or nil,
+        currency = type(payment) == 'table' and payment.currency or nil
+    }
+    local event = {
+        actor = source and { source = source, actorType = 'PLAYER' } or nil,
+        action = 'settlement.settle',
+        target = { type = 'BOOKING', ref = tostring(bookingId(bookingOrId)) },
+        result = result,
+        resultStatus = status,
+        resultCode = errorResult and errorResult.code or nil,
+        reason = errorResult and errorResult.message or nil,
+        metadata = metadata
+    }
+    pcall(self._audit.record, self._audit, event)
+end
+
+function Service:commissionSnapshot(booking, request, amount)
+    local input = type(request) == 'table' and (request.commissionSnapshot or request.commissionSplit) or nil
+    input = input or (type(booking) == 'table' and (booking.commissionSnapshot or booking.commissionSplit))
+    if not input and type(self._splitResolver) == 'function' then
+        local ok, value = pcall(self._splitResolver, copy(booking), copy(request or {}))
+        if not ok then return nil, invalid('settlement commission split resolver failed') end
+        input = value
+    end
+    return normalizeSplit(input, amount)
 end
 
 function Service:isEnabled() return self._config.enabled == true end
@@ -163,9 +239,11 @@ function Service:_finalizeDeposit(booking, actor)
     return true
 end
 
-function Service:_runCommission(booking, payment, request, key)
-    if type(self._commissionHook) ~= 'function' then return true, nil end
-    local ok, value = pcall(self._commissionHook, copy(booking), copy(payment), copy(request or {}), key)
+function Service:_runCommission(booking, payment, request, key, snapshot)
+    if type(self._commissionHook) ~= 'function' then return true, snapshot end
+    local hookRequest = copy(request or {})
+    hookRequest.commissionSnapshot = copy(snapshot)
+    local ok, value = pcall(self._commissionHook, copy(booking), copy(payment), hookRequest, key)
     if not ok then
         return nil, Result.err(Codes.SETTLEMENT_OPERATION_FAILED, 'settlement commission hook failed', { paymentCommitted = true })
     end
@@ -173,10 +251,10 @@ function Service:_runCommission(booking, payment, request, key)
         return nil, Result.err(Codes.SETTLEMENT_OPERATION_FAILED, 'settlement commission hook rejected the payment', { paymentCommitted = true })
     end
     if type(value) == 'table' and value.ok == true then return true, copy(value.value) end
-    return true, copy(value)
+    return true, copy(value or snapshot)
 end
 
-function Service:settle(first, second, request)
+function Service:_settle(first, second, request)
     local actor, bookingOrId = normalizeBookingActor(first, second)
     if not self:isEnabled() then return Result.err(Codes.SETTLEMENT_NOT_READY, 'settlement is disabled') end
     local booking, bookingError = self:_loadBooking(bookingOrId)
@@ -194,6 +272,8 @@ function Service:settle(first, second, request)
     local amount = integer(price.amountMinor, 1, 100000000000)
     local currency = type(price.currency) == 'string' and price.currency:upper() or nil
     if not amount or not currency or currency:match('^[A-Z][A-Z][A-Z]$') == nil then return invalid('booking agreed price is invalid') end
+    local snapshot, snapshotError = self:commissionSnapshot(booking, request, amount)
+    if snapshotError then return snapshotError end
     local key = ('settlement:%s'):format(tostring(booking.id))
     local existing, lookupError = self:_find(key)
     if lookupError then return lookupError end
@@ -204,7 +284,7 @@ function Service:settle(first, second, request)
         end
         local finalized, finalizeError = self:_finalizeDeposit(booking, actor)
         if not finalized then return finalizeError end
-        local commissionOk, commission = self:_runCommission(booking, existing, request, key)
+        local commissionOk, commission = self:_runCommission(booking, existing, request, key, existing.commissionSnapshot or snapshot)
         if not commissionOk then return commission end
         local transitioned = self._bookingService:settle(actor, booking.id, booking.version)
         if type(transitioned) ~= 'table' or not transitioned.ok then return Result.err(Codes.SETTLEMENT_OPERATION_FAILED, 'payment succeeded but booking transition is pending', { paymentCommitted = true, cause = transitioned and transitioned.error and transitioned.error.code }) end
@@ -212,12 +292,12 @@ function Service:settle(first, second, request)
         return Result.ok({ booking = transitioned.value or transitioned, payment = existing, commission = commission, status = 'SETTLED' }, { idempotent = true }) end
     local payment = existing
     if not payment then
-        local created = self._repository:create({ bookingId = booking.id, idempotencyKey = key, paymentType = 'SETTLEMENT', amountMinor = amount, currency = currency, status = 'PENDING' })
+        local created = self._repository:create({ bookingId = booking.id, idempotencyKey = key, paymentType = 'SETTLEMENT', amountMinor = amount, currency = currency, status = 'PENDING', commissionSnapshot = copy(snapshot) })
         if type(created) ~= 'table' or not created.ok then
             local raced = self:_find(key)
             if raced then payment = raced else return Result.err(Codes.SETTLEMENT_OPERATION_FAILED, 'settlement intent could not be persisted', { cause = created and created.error and created.error.code }) end
         else
-            payment = { id = created.value and (created.value.insertId or created.value.id), bookingId = booking.id, idempotencyKey = key, paymentType = 'SETTLEMENT', amountMinor = amount, currency = currency, status = 'PENDING', version = 1 }
+            payment = { id = created.value and (created.value.insertId or created.value.id), bookingId = booking.id, idempotencyKey = key, paymentType = 'SETTLEMENT', amountMinor = amount, currency = currency, status = 'PENDING', commissionSnapshot = copy(snapshot), version = 1 }
         end
     end
     if payment.amountMinor ~= amount or payment.currency ~= currency then return Result.err(Codes.SETTLEMENT_OPERATION_FAILED, 'settlement intent fingerprint does not match booking', { status = 'UNKNOWN' }) end
@@ -234,12 +314,20 @@ function Service:settle(first, second, request)
     committed.version = updated.value and updated.value.version or (payment.version or 1) + 1
     local finalized, finalizeError = self:_finalizeDeposit(booking, actor)
     if not finalized then return finalizeError end
-    local commissionOk, commission = self:_runCommission(booking, committed, request, key)
+    committed.commissionSnapshot = committed.commissionSnapshot or copy(snapshot)
+    local commissionOk, commission = self:_runCommission(booking, committed, request, key, committed.commissionSnapshot)
     if not commissionOk then return commission end
     local transitioned = self._bookingService:settle(actor, booking.id, booking.version)
     if type(transitioned) ~= 'table' or not transitioned.ok then return Result.err(Codes.SETTLEMENT_OPERATION_FAILED, 'settlement payment committed but booking transition is pending', { paymentCommitted = true, cause = transitioned and transitioned.error and transitioned.error.code }) end
     self._settled[tostring(booking.id)] = true
     return Result.ok({ booking = transitioned.value or transitioned, payment = committed, commission = commission, status = 'SETTLED' })
+end
+
+function Service:settle(first, second, request)
+    local actor, bookingOrId = normalizeBookingActor(first, second)
+    local result = self:_settle(first, second, request)
+    self:_recordAudit(actor, bookingOrId, result)
+    return result
 end
 
 Service.process = Service.settle

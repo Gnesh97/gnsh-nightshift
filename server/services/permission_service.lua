@@ -84,6 +84,7 @@ function PermissionService.new(options)
         _definitions = copy(definitions),
         _aceChecker = options.aceChecker,
         _provider = options.provider or options.customProvider,
+        _audit = options.auditService or options.audit,
         _cache = {},
         _tokens = {}
     }, PermissionService)
@@ -163,7 +164,7 @@ function PermissionService:_jobDecision(identity, definition)
     return grade >= minimum
 end
 
-function PermissionService:check(sourceValue, permission)
+function PermissionService:_check(sourceValue, permission)
     sourceValue = tonumber(sourceValue)
     if not source(sourceValue) then return invalid('permission source must be a positive integer', { source = sourceValue }) end
     if not text(permission) or type(self._definitions[permission]) ~= 'table' then return invalid('permission key is not allowlisted', { permission = permission }) end
@@ -200,6 +201,27 @@ function PermissionService:check(sourceValue, permission)
         return Result.ok(allowed)
     end
     return denied(permission, identity, ace == false and 'ace' or 'job')
+end
+
+function PermissionService:check(sourceValue, permission)
+    local result = self:_check(sourceValue, permission)
+    if type(self._audit) == 'table' and type(self._audit.record) == 'function' then
+        local numericSource = tonumber(sourceValue)
+        local errorResult = type(result) == 'table' and (result.error or result) or nil
+        pcall(self._audit.record, self._audit, {
+            actor = numericSource and { source = numericSource, actorType = 'PLAYER' } or nil,
+            action = 'permission.check',
+            target = { type = 'PERMISSION', ref = tostring(permission or '') },
+            result = result,
+            resultStatus = type(result) == 'table' and result.ok == true and 'OK' or 'ERROR',
+            resultCode = errorResult and errorResult.code or nil,
+            reason = errorResult and errorResult.message or nil,
+            metadata = {
+                via = type(result) == 'table' and type(result.value) == 'table' and result.value.via or nil
+            }
+        })
+    end
+    return result
 end
 
 PermissionService.authorize = PermissionService.check

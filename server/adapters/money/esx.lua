@@ -7,19 +7,19 @@ local function invoke(container, method, ...)
     if type(container) ~= 'table' then return nil end
     local fn = container[method]
     if type(fn) ~= 'function' then return nil end
-    local ok, value = pcall(fn, container, ...)
-    if ok and value ~= nil then return value end
-    ok, value = pcall(fn, ...)
-    return ok and value or nil
+    local called, value = pcall(fn, container, ...)
+    if called and value ~= nil then return value end
+    called, value = pcall(fn, ...)
+    return called and value or nil
 end
 
 local function invokeStatus(container, method, ...)
     if type(container) ~= 'table' or type(container[method]) ~= 'function' then return false end
     local fn = container[method]
-    local ok, value = pcall(fn, container, ...)
-    if ok then return value ~= false end
-    ok, value = pcall(fn, ...)
-    return ok and value ~= false
+    local called, value = pcall(fn, container, ...)
+    if called then return value ~= false end
+    called, value = pcall(fn, ...)
+    return called and value ~= false
 end
 
 local function getESX(options)
@@ -50,8 +50,8 @@ function Adapter.new(options)
         if type(getPlayerFromId) ~= 'function' then return nil end
         local ok, value = pcall(getPlayerFromId, source)
         if ok and value ~= nil then return value end
-        ok, value = pcall(getPlayerFromId, esx, source)
-        return ok and value or nil
+        local called, value = pcall(getPlayerFromId, esx, source)
+        return called and value or nil
     end
     local function accountValue(value)
         if type(value) == 'number' then return value end

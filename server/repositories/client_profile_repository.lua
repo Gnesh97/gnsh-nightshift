@@ -12,7 +12,7 @@ Repository.__index = Repository
 local columns = {
     'id', 'player_identifier', 'character_id', 'display_name', 'locale',
     'completed_bookings', 'cancelled_bookings', 'no_show_bookings', 'rating', 'tier',
-    'deposit_risk_score', 'deposit_risk_reason', 'last_active_at', 'version', 'created_at', 'updated_at'
+    'deposit_risk_score', 'deposit_risk_reason', 'reliability', 'last_active_at', 'version', 'created_at', 'updated_at'
 }
 
 local mutable = {
@@ -21,6 +21,7 @@ local mutable = {
     cancelledBookings = 'cancelled_bookings', cancelled_bookings = 'cancelled_bookings',
     noShowBookings = 'no_show_bookings', no_show_bookings = 'no_show_bookings',
     rating = 'rating', tier = 'tier',
+    reliability = 'reliability',
     depositRiskScore = 'deposit_risk_score', deposit_risk_score = 'deposit_risk_score',
     depositRiskReason = 'deposit_risk_reason', deposit_risk_reason = 'deposit_risk_reason',
     lastActiveAt = 'last_active_at', last_active_at = 'last_active_at'

@@ -12,6 +12,16 @@ NightShift.NpcStreamingConfig = {
     maxPlausibleArrivalDistance = 12,
     defaultEtaSeconds = 60,
     returnCooldownSeconds = 15,
+    -- Physical NPCs are a bounded projection of the logical worker pool.
+    -- The budget is server-side and leases are reclaimed after leaseSeconds.
+    budget = {
+        enabled = true,
+        maxActive = 64,
+        maxPerSource = 8,
+        maxPerDistrict = 32,
+        maxTracked = 512,
+        leaseSeconds = 120
+    },
     modelAllowlist = {},
     defaultModel = nil
 }

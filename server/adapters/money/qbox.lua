@@ -8,10 +8,10 @@ local function invoke(container, method, ...)
     local ok, fn = pcall(function() return container[method] end)
     if not ok then return nil end
     if type(fn) ~= 'function' then return nil end
-    ok, value = pcall(fn, container, ...)
-    if ok and value ~= nil then return value end
-    ok, value = pcall(fn, ...)
-    return ok and value or nil
+    local called, value = pcall(fn, container, ...)
+    if called and value ~= nil then return value end
+    called, value = pcall(fn, ...)
+    return called and value or nil
 end
 
 local function getCore(options)
@@ -38,8 +38,8 @@ local function callSource(fn, source, account, amount, reason, core)
     if type(fn) ~= 'function' then return nil end
     local ok, value = pcall(fn, source, account, amount, reason)
     if ok and value ~= nil then return value end
-    ok, value = pcall(fn, core, source, account, amount, reason)
-    return ok and value or nil
+    local called, value = pcall(fn, core, source, account, amount, reason)
+    return called and value or nil
 end
 
 local Adapter = {}

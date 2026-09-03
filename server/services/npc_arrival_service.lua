@@ -57,6 +57,7 @@ function Service.new(options)
         _travel = options.travelService,
         _registry = options.entityRegistry,
         _booking = options.bookingService,
+        _actorResolver = options.actorResolver,
         _clock = options.clock,
         _distanceCheck = options.distanceCheck or options.plausibilityCheck,
         _maxDistance = maxDistance
@@ -114,6 +115,12 @@ function Service:accept(playerSource, payload)
         return Result.err(Codes.NPC_ARRIVAL_INVALID, 'booking arrival transition is unavailable')
     end
     local actor = { type = 'PLAYER', ref = tostring(playerSource), source = playerSource }
+    if type(self._actorResolver) == 'function' then
+        local okActor, resolvedActor = pcall(self._actorResolver, playerSource, copy(payload), copy(travel))
+        if okActor and type(resolvedActor) == 'table' and type(resolvedActor.ref) == 'string' then
+            actor = { type = 'PLAYER', ref = resolvedActor.ref, source = playerSource }
+        end
+    end
     local ok, bookingResult = pcall(self._booking.markArrival, self._booking, actor, payload.bookingId, payload.expectedVersion, function()
         return true
     end)
@@ -129,6 +136,58 @@ function Service:accept(playerSource, payload)
         generationToken = binding.value.generationToken
     })
 end
+
+-- Pickup has an intermediate arrival at the roadside point. It must be
+-- generation/proximity validated just like a destination arrival, but it
+-- must not transition the booking to ARRIVED before a vehicle is bound.
+function Service:validateOnly(playerSource, payload)
+    playerSource = source(playerSource)
+    if not playerSource or type(payload) ~= 'table' then return invalid('arrival payload is invalid') end
+    local allowed = {
+        travelKey = true, bookingId = true, profileKey = true, generationToken = true,
+        entity = true, networkId = true, expectedVersion = true, position = true
+    }
+    for key in pairs(payload) do
+        if not allowed[key] then return Result.err(Codes.NPC_ARRIVAL_SPOOF, 'arrival payload contains an untrusted field', { field = tostring(key) }) end
+    end
+    if not token(payload.travelKey, 200) or not token(payload.bookingId, 160) or
+        not token(payload.profileKey, 160) or not token(payload.generationToken, 240) then
+        return Result.err(Codes.NPC_ARRIVAL_SPOOF, 'arrival payload is missing a generation-bound travel context')
+    end
+    local travelResult = self._travel:get(payload.travelKey)
+    if not travelResult.ok then return Result.err(Codes.NPC_ARRIVAL_STALE, 'arrival travel plan is unavailable') end
+    local travel = travelResult.value
+    if travel.bookingId ~= payload.bookingId or travel.profileKey ~= payload.profileKey then
+        return Result.err(Codes.NPC_ARRIVAL_SPOOF, 'arrival logical context does not match the travel plan')
+    end
+    local binding = self._registry:validate(payload.profileKey, payload.generationToken, {
+        travelKey = payload.travelKey, bookingId = payload.bookingId,
+        entity = payload.entity, networkId = payload.networkId, owner = playerSource
+    })
+    if not binding.ok then return binding end
+    if travel.state ~= 'TRAVELLING' and travel.state ~= 'ARRIVAL_PENDING' and travel.state ~= 'RECOVERING' then
+        return Result.err(Codes.NPC_ARRIVAL_STALE, 'arrival travel plan is not active')
+    end
+    if not travel:isSpawnReady() then return Result.err(Codes.NPC_ARRIVAL_STALE, 'arrival was reported before the travel spawn threshold') end
+    if binding.value.state ~= 'BOUND' or binding.value.entity == nil then
+        return Result.err(Codes.NPC_ARRIVAL_STALE, 'arrival entity binding is deleted or not spawned')
+    end
+    if type(self._distanceCheck) ~= 'function' then
+        return Result.err(Codes.NPC_ARRIVAL_INVALID, 'server arrival plausibility check is unavailable')
+    end
+    local distanceOk, plausible = call(self._distanceCheck, playerSource, copy(travel), copy(payload), copy(binding.value), self._maxDistance)
+    if not distanceOk or plausible == nil then return Result.err(Codes.NPC_ARRIVAL_INVALID, 'server arrival plausibility check failed') end
+    if not (plausible == true or type(plausible) == 'table' and (plausible.allowed == true or plausible.ok == true and (plausible.value == nil or plausible.value == true or plausible.value.allowed == true))) then
+        return Result.err(Codes.NPC_ARRIVAL_TOO_FAR, 'arrival position is not plausible')
+    end
+    return Result.ok({
+        bookingId = payload.bookingId, travel = copy(travel), binding = copy(binding.value),
+        profileKey = payload.profileKey, generation = binding.value.generation,
+        generationToken = binding.value.generationToken
+    }, { validated = true, serverAuthoritative = true })
+end
+
+Service.validatePickupArrival = Service.validateOnly
 
 Service.markArrival = Service.accept
 Service.validate = Service.accept

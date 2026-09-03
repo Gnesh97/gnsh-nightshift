@@ -5,6 +5,7 @@ local Codes = NightShift.Errors.Codes
 local Domain = NightShift.Domain.Booking
 local StateMachine = NightShift.BookingStateMachine
 local PriceQuote = NightShift.Domain and NightShift.Domain.PriceQuote
+local ScheduleConflict = NightShift.ScheduleConflictService
 
 local Service = {}
 Service.__index = Service
@@ -27,6 +28,11 @@ local function integer(value, minimum)
     value = tonumber(value)
     if not value or value ~= value or value == math.huge or value == -math.huge or math.floor(value) ~= value or (minimum and value < minimum) then return nil end
     return value
+end
+
+local function finite(value)
+    value = tonumber(value)
+    return value and value == value and value ~= math.huge and value ~= -math.huge
 end
 
 local function invalid(message, details)
@@ -129,9 +135,13 @@ function Service.new(options)
         _locationResolver = options.locationResolver or options.locationService,
         _catalogResolver = options.catalogResolver or options.resolveServicePackage,
         _quote = options.quoteResolver or options.resolveQuote or options.pricingService,
+        _eventBus = options.eventBus,
+        _districtResolver = options.districtResolver or options.eventDistrictResolver,
+        _eventDistricts = {},
         _authorize = options.authorize,
         _permissionService = options.permissionService,
-        _clock = options.clock
+        _clock = options.clock,
+        _scheduleConflict = options.scheduleConflictService or options.scheduleConflict
     }, Service)
 end
 
@@ -202,7 +212,13 @@ function Service:createDraft(actor, input)
     if not text(idempotencyKey, 128) then return invalid('booking idempotency key is invalid') end
     local existing = self._repository:findByIdempotencyKey(idempotencyKey)
     if type(existing) ~= 'table' then return Result.err(Codes.BOOKING_NOT_FOUND, 'idempotency lookup returned an invalid result') end
-    if existing.ok then return Result.ok(copy(existing.value), { idempotent = true }) end
+    if existing.ok then
+        local existingValue = copy(existing.value)
+        if input.district ~= nil and existingValue and existingValue.id ~= nil then
+            self._eventDistricts[tostring(existingValue.id)] = input.district
+        end
+        return Result.ok(existingValue, { idempotent = true })
+    end
     if not notFound(existing) then return existing end
 
     local resolvedLocation
@@ -254,13 +270,31 @@ function Service:createDraft(actor, input)
     end
     local id = created.value and (created.value.insertId or created.value.id)
     if id ~= nil then
+        if input.district ~= nil then self._eventDistricts[tostring(id)] = input.district end
         local persisted, persistedError = self:_get(id)
-        if persisted then return Result.ok(persisted, { created = true }) end
+        if persisted then
+            if self._eventBus and type(self._eventBus.publishCommitted) == 'function' then
+                pcall(self._eventBus.publishCommitted, self._eventBus, 'booking.created', {
+                    booking = copy(persisted), eventKey = ('booking:create:%s'):format(tostring(id))
+                }, { correlationId = persisted.correlationId or input.correlationId })
+            end
+            return Result.ok(persisted, { created = true })
+        end
         if persistedError and notFound(persistedError) then
             booking.id = id
+            if self._eventBus and type(self._eventBus.publishCommitted) == 'function' then
+                pcall(self._eventBus.publishCommitted, self._eventBus, 'booking.created', {
+                    booking = copy(booking), eventKey = ('booking:create:%s'):format(tostring(id))
+                }, { correlationId = booking.correlationId or input.correlationId })
+            end
             return Result.ok(booking, { created = true, persisted = false })
         end
         return persistedError
+    end
+    if self._eventBus and type(self._eventBus.publishCommitted) == 'function' then
+        pcall(self._eventBus.publishCommitted, self._eventBus, 'booking.created', {
+            booking = copy(booking), eventKey = ('booking:create:%s'):format(tostring(idempotencyKey))
+        }, { correlationId = booking.correlationId or input.correlationId })
     end
     return Result.ok(booking, { created = true, persisted = false })
 end
@@ -309,6 +343,25 @@ function Service:_transition(actor, id, target, expected, metadata, changes, tru
     merged.id = booking.id
     merged.createdAt = booking.createdAt
     merged.updatedAt = booking.updatedAt
+    if self._eventBus and type(self._eventBus.publishCommitted) == 'function' then
+        local eventKey = ('booking:%s:%s:%s'):format(tostring(booking.id), tostring(booking.version), tostring(nextBooking.status))
+        local district = metadata.district or self._eventDistricts[tostring(booking.id)]
+        if district == nil and type(self._districtResolver) == 'function' then
+            local ok, resolved = pcall(self._districtResolver, copy(booking), copy(merged), copy(metadata))
+            if ok then
+                if type(resolved) == 'table' and resolved.ok ~= nil then resolved = resolved.ok and resolved.value or nil end
+                district = type(resolved) == 'table' and (resolved.district or resolved.id or resolved.key) or resolved
+            end
+        end
+        pcall(self._eventBus.publishCommitted, self._eventBus, 'booking.state_changed', {
+            booking = copy(merged),
+            oldState = booking.status,
+            newState = nextBooking.status,
+            metadata = copy(metadata),
+            district = district,
+            eventKey = eventKey
+        }, { correlationId = metadata.correlationId })
+    end
     return Result.ok(merged, { transition = { from = booking.status, to = nextBooking.status }, timeline = timeline.value })
 end
 
@@ -417,6 +470,84 @@ function Service:accept(actor, id, expected, options)
         end
     end
     return self:_transition(actor, id, 'ACCEPTED', expected or booking.version, { reason = 'offer-accepted' }, agreed and { agreedPrice = agreed } or nil)
+end
+
+function Service:schedule(actor, id, scheduledAt, expected, options)
+    options = options or {}
+    if type(options) ~= 'table' then return invalid('schedule options must be a table') end
+    if scheduledAt == nil or (not finite(scheduledAt) and not text(scheduledAt, 64)) then
+        return Result.err(Codes.SCHEDULING_INVALID, 'scheduled timestamp is required')
+    end
+    local booking, bookingError = self:_get(id)
+    if not booking then return bookingError end
+    local owner, ownerError = self:_requireOwner(actor, booking, 'schedule')
+    if not owner then return ownerError end
+    local expectedValue, expectedError = expectedVersion(expected)
+    if expectedError then return expectedError end
+    if expectedValue ~= nil and expectedValue ~= booking.version then
+        return Result.err(Codes.VERSION_CONFLICT, 'booking version does not match', { id = id, expectedVersion = expectedValue, actualVersion = booking.version })
+    end
+    if booking.status == 'SCHEDULED' then
+        if tostring(booking.scheduledAt or '') == tostring(scheduledAt) then return Result.ok(copy(booking), { idempotent = true }) end
+        return Result.err(Codes.SCHEDULING_CONFLICT, 'booking already has a different scheduled timestamp', { id = id })
+    end
+    if booking.status ~= 'ACCEPTED' then
+        return Result.err(Codes.SCHEDULING_NOT_READY, 'only accepted bookings can be scheduled', { status = booking.status })
+    end
+    local epoch = ScheduleConflict and type(ScheduleConflict.toEpoch) == 'function' and ScheduleConflict.toEpoch(scheduledAt) or tonumber(scheduledAt)
+    if not epoch or not finite(epoch) or epoch < 0 then
+        return Result.err(Codes.SCHEDULING_INVALID, 'scheduled timestamp is invalid', { field = 'scheduledAt' })
+    end
+    if type(self._clock) == 'table' and type(self._clock.now) == 'function' then
+        local ok, now = pcall(self._clock.now, self._clock)
+        now = tonumber(now)
+        if ok and finite(now) and epoch <= now and options.allowPast ~= true then
+            return Result.err(Codes.SCHEDULING_INVALID, 'scheduled timestamp must be in the future', { scheduledAt = scheduledAt, now = now })
+        end
+    end
+    local candidate = copy(booking)
+    candidate.scheduledAt = scheduledAt
+    local conflict = self._scheduleConflict
+    if conflict and type(conflict.check) == 'function' then
+        local ok, result = pcall(conflict.check, conflict, candidate, options.candidates or options.existing, copy(options))
+        if not ok or type(result) ~= 'table' then return Result.err(Codes.SCHEDULING_NOT_READY, 'schedule conflict check failed') end
+        if not result.ok then return result end
+    end
+    return self:_transition(owner, id, 'SCHEDULED', expectedValue or booking.version, {
+        reason = options.reason or 'booking-scheduled',
+        details = { scheduledAt = scheduledAt }
+    }, { scheduledAt = scheduledAt })
+end
+
+function Service:activateScheduled(actor, id, expected, options)
+    options = options or {}
+    if type(options) ~= 'table' then return invalid('scheduled activation options must be a table') end
+    local booking, bookingError = self:_get(id)
+    if not booking then return bookingError end
+    local owner, ownerError = self:_requireOwner(actor, booking, 'activate-scheduled')
+    if not owner then return ownerError end
+    local expectedValue, expectedError = expectedVersion(expected)
+    if expectedError then return expectedError end
+    if expectedValue ~= nil and expectedValue ~= booking.version then
+        return Result.err(Codes.VERSION_CONFLICT, 'booking version does not match', { id = id, expectedVersion = expectedValue, actualVersion = booking.version })
+    end
+    if booking.status == 'RESERVED' then return Result.ok(copy(booking), { idempotent = true, scheduledActivation = true }) end
+    if booking.status ~= 'SCHEDULED' then
+        return Result.err(Codes.SCHEDULING_NOT_READY, 'booking is not waiting for scheduled activation', { status = booking.status })
+    end
+    local reservation
+    local resources = options.resources
+    if self._reservation and type(self._reservation.reserve) == 'function' and type(resources) == 'table' and #resources > 0 then
+        reservation = self._reservation:reserve(tostring(booking.id), resources, { booking = copy(booking) })
+        if type(reservation) ~= 'table' or not reservation.ok then return reservation end
+    end
+    local transitioned = self:_transition(owner, id, 'RESERVED', expectedValue or booking.version, {
+        reason = options.reason or 'scheduled-activation'
+    })
+    if not transitioned.ok and reservation and self._reservation and type(self._reservation.release) == 'function' then
+        self._reservation:release(tostring(booking.id), reservation.value and reservation.value.acquired or {})
+    end
+    return transitioned
 end
 
 function Service:decline(actor, id, expected, reason)

@@ -62,6 +62,19 @@ do
 end
 
 do
+    local attempts = 0
+    local retryBus = NightShift.EventBus.new({ retryLimit = 3 })
+    retryBus:subscribe('retryable', function()
+        attempts = attempts + 1
+        if attempts == 1 then return NightShift.Result.err('TEMPORARY', 'retry me') end
+    end)
+    local published = retryBus:publishCommitted('retryable', {})
+    check(published.ok and published.metadata.retryPending == 1, 'failed handlers should be queued for retry')
+    local retried = retryBus:retryFailed()
+    check(retried.ok and retried.value.delivered == 1 and retried.value.failed == 0 and attempts == 2 and retryBus:pendingFailures() == 0, 'failed event handlers should recover through bounded retry')
+end
+
+do
     local seen
     bus:subscribe('correlation.normalized', function(event) seen = event.correlationId end)
     bus:publishCommitted('correlation.normalized', {}, { correlationId = 'unsafe id/value' })

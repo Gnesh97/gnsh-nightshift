@@ -80,7 +80,34 @@ function Service.new(options)
         if not percent or percent < 0 or percent > 100 then return nil, invalid('refund policy percentage is invalid', { state = state }) end
         normalized[state:upper()] = percent
     end
-    return setmetatable({ _repository = repository, _money = money, _bookingService = options.bookingService, _deposit = options.depositService, _config = { enabled = config.enabled, account = account, percentages = normalized, refundDeposit = config.refundDeposit ~= false } }, Service)
+    return setmetatable({
+        _repository = repository, _money = money, _bookingService = options.bookingService,
+        _deposit = options.depositService, _audit = options.auditService or options.audit,
+        _config = { enabled = config.enabled, account = account, percentages = normalized, refundDeposit = config.refundDeposit ~= false }
+    }, Service)
+end
+
+function Service:_recordAudit(actor, bookingOrId, result)
+    if type(self._audit) ~= 'table' or type(self._audit.record) ~= 'function' then return end
+    local source = type(actor) == 'table' and actor.source or actor
+    source = integer(source, 1)
+    local value = type(result) == 'table' and result.value or nil
+    local errorResult = type(result) == 'table' and (result.error or result) or nil
+    local event = {
+        actor = source and { source = source, actorType = 'PLAYER' } or nil,
+        action = 'refund.apply',
+        target = { type = 'BOOKING', ref = tostring(bookingId(bookingOrId)) },
+        result = result,
+        resultStatus = type(result) == 'table' and result.ok == true and 'OK' or 'ERROR',
+        resultCode = errorResult and errorResult.code or nil,
+        reason = errorResult and errorResult.message or nil,
+        metadata = {
+            status = type(value) == 'table' and value.status or nil,
+            amountMinor = type(value) == 'table' and value.amountMinor or nil,
+            currency = type(value) == 'table' and value.currency or nil
+        }
+    }
+    pcall(self._audit.record, self._audit, event)
 end
 
 function Service:isEnabled() return self._config.enabled == true end
@@ -119,7 +146,7 @@ function Service:calculate(booking)
     return Result.ok({ bookingId = booking.id, status = status, percentage = percentage, amountMinor = math.floor((amount * percentage / 100) + 0.5), currency = currency })
 end
 
-function Service:refund(first, second, request)
+function Service:_refund(first, second, request)
     local actor, bookingOrId = normalizeBookingActor(first, second)
     if not self:isEnabled() then return Result.ok({ bookingId = bookingId(bookingOrId), amountMinor = 0, status = 'DISABLED' }, { disabled = true }) end
     local booking, bookingError = self:_loadBooking(bookingOrId)
@@ -175,6 +202,13 @@ function Service:refund(first, second, request)
             return Result.err(Codes.REFUND_OPERATION_FAILED, 'refund payment committed but deposit refund is pending', { paymentCommitted = true, cause = depositResult.error.code }) end
     end
     return Result.ok(output)
+end
+
+function Service:refund(first, second, request)
+    local actor, bookingOrId = normalizeBookingActor(first, second)
+    local result = self:_refund(first, second, request)
+    self:_recordAudit(actor, bookingOrId, result)
+    return result
 end
 
 Service.apply = Service.refund

@@ -11,10 +11,14 @@ local transitions = {
     DRAFT = { QUOTED = true, CANCELLED = true, EXPIRED = true },
     QUOTED = { OFFERED = true, CANCELLED = true, EXPIRED = true },
     OFFERED = { ACCEPTED = true, DECLINED = true, CANCELLED = true, EXPIRED = true },
-    ACCEPTED = { RESERVED = true, CANCELLED = true, EXPIRED = true },
+    ACCEPTED = { SCHEDULED = true, RESERVED = true, CANCELLED = true, EXPIRED = true },
+    SCHEDULED = { RESERVED = true, CANCELLED = true, EXPIRED = true, INTERRUPTED = true },
     RESERVED = { TRAVELLING = true, CANCELLED = true, INTERRUPTED = true },
-    TRAVELLING = { ARRIVED = true, CANCELLED = true, INTERRUPTED = true, EXPIRED = true },
-    ARRIVED = { ACTIVE = true, CANCELLED = true, INTERRUPTED = true },
+    -- PICKUP uses two physical travel legs while the booking remains in the
+    -- travelling state. A guarded self-transition advances the optimistic
+    -- version without inventing a second booking engine/state.
+    TRAVELLING = { TRAVELLING = true, ARRIVED = true, CANCELLED = true, INTERRUPTED = true, EXPIRED = true },
+    ARRIVED = { ACTIVE = true, CANCELLED = true, EXPIRED = true, INTERRUPTED = true },
     ACTIVE = { COMPLETED = true, CANCELLED = true, INTERRUPTED = true },
     COMPLETED = { SETTLED = true },
     SETTLED = {},

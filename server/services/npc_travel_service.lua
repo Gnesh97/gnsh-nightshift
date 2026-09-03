@@ -245,6 +245,24 @@ function Service:markReturning(travelKey, atOrOptions)
     return self:markRecovery(travelKey, 'RETURNING', atOrOptions)
 end
 
+function Service:cancel(travelKey, at)
+    if not token(travelKey, 200) then return Result.err(Codes.TRAVEL_INVALID, 'travel key is invalid') end
+    local found = self:get(travelKey)
+    if not found.ok then return found end
+    local plan = found.value
+    if plan.state == 'CANCELLED' then return Result.ok(copy(plan), { idempotent = true }) end
+    if plan.state == 'COMPLETED' or plan.state == 'EXPIRED' then
+        return Result.err(Codes.TRAVEL_CONFLICT, 'terminal travel plan cannot be cancelled')
+    end
+    local cancelled = copy(plan)
+    cancelled.state = 'CANCELLED'
+    cancelled.updatedAt = optionTime(at, now(self._clock))
+    local normalized, err = Plan.new(cancelled)
+    if not normalized then return err end
+    self._plans[travelKey] = nil
+    return Result.ok(copy(normalized), { cancelled = true })
+end
+
 function Service:list()
     local output = {}
     for _, plan in pairs(self._plans) do output[#output + 1] = copy(plan) end

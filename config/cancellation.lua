@@ -16,7 +16,9 @@ NightShift.CancellationConfig = NightShift.CancellationConfig or {
         ARRIVED = 50,
         ACTIVE = 0,
         COMPLETED = 0,
-        SETTLED = 0
+        SETTLED = 0,
+        EXPIRED = 100,
+        INTERRUPTED = 50
     }
 }
 

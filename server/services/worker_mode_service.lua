@@ -249,6 +249,7 @@ function Service:_materialize(context, negotiation)
         workerType = 'PLAYER', workerRef = actor.ref,
         servicePackageId = context.package.id, meetingMode = context.location.meetingMode,
         locationType = context.location.locationType, locationRef = context.location.locationRef,
+        district = context.opportunity and context.opportunity.district,
         correlationId = 'negotiation:' .. tostring(negotiation.id)
     }
     local draftResult = self._booking:createDraft(actor, input)
@@ -464,6 +465,52 @@ function Service:completeSession(actorInputValue, sessionToken, request)
     if context and context.reservation and self._locationReservation and type(self._locationReservation.release) == 'function' then pcall(self._locationReservation.release, self._locationReservation, booking.id, context.reservation.reservationKey) end
     self._availability:releaseBooking(actor.source, booking.id, { returnAvailable = true })
     return Result.ok({ session = completed.session, booking = settlement.booking or booking, settlement = settlement, workerProfile = profile }, { completed = true, settled = true, profileUpdated = profile ~= nil })
+end
+
+-- Disconnect cleanup is deliberately idempotent.  The framework unload hook
+-- can run after availability has already been reset, so it uses the immutable
+-- actor snapshot held by each negotiation context instead of re-resolving a
+-- live worker record.
+function Service:disconnect(playerSource, reason)
+    local source = sourceValue(playerSource)
+    if not source then return invalid('worker mode disconnect source is invalid') end
+    reason = type(reason) == 'string' and reason:match('%S') and reason:sub(1, 160) or 'worker-disconnected'
+    local results, interrupted, idempotent = {}, 0, 0
+    for negotiationId, context in pairs(self._contexts) do
+        local actor = type(context) == 'table' and context.actor or nil
+        local bookingId = type(context) == 'table' and context.bookingId or nil
+        if type(actor) == 'table' and tonumber(actor.source) == source and bookingId ~= nil then
+            local currentResult = type(self._booking.get) == 'function' and self._booking:get(bookingId) or nil
+            local current = type(currentResult) == 'table' and currentResult.ok and currentResult.value or nil
+            local status = type(current) == 'table' and tostring(current.status or ''):upper() or nil
+            local active = status == 'RESERVED' or status == 'TRAVELLING' or status == 'ARRIVED' or status == 'ACTIVE'
+            if active then
+                local result = self._booking:interrupt(actor, bookingId, current.version, reason)
+                local value = type(result) == 'table' and result.ok and result.value or nil
+                if type(result) == 'table' and result.ok then
+                    interrupted = interrupted + 1
+                    if type(value) == 'table' then context.bookingId, context.booking = value.id, copy(value) end
+                    if context.reservation and self._locationReservation and type(self._locationReservation.release) == 'function' then
+                        pcall(self._locationReservation.release, self._locationReservation, bookingId, context.reservation.reservationKey)
+                    end
+                    if self._availability and type(self._availability.releaseBooking) == 'function' then
+                        pcall(self._availability.releaseBooking, self._availability, source, bookingId, { returnAvailable = false })
+                    end
+                elseif type(result) == 'table' and result.error and result.error.code == Codes.VERSION_CONFLICT and type(self._booking.get) == 'function' then
+                    local latest = self._booking:get(bookingId)
+                    local latestValue = type(latest) == 'table' and latest.ok and latest.value or nil
+                    if type(latestValue) == 'table' and tostring(latestValue.status or ''):upper() == 'INTERRUPTED' then
+                        idempotent = idempotent + 1
+                    end
+                end
+                results[#results + 1] = result
+            else
+                idempotent = idempotent + 1
+            end
+            self._contexts[negotiationId] = context
+        end
+    end
+    return Result.ok({ source = source, interrupted = interrupted, idempotent = idempotent, results = results })
 end
 
 function Service:getNegotiation(id)

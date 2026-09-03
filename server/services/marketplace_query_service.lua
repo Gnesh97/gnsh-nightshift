@@ -109,7 +109,8 @@ function Service.new(options)
         _workerService = options.workerService,
         _maxPageSize = maxPageSize,
         _etaEstimator = options.etaEstimator,
-        _clock = options.clock
+        _clock = options.clock,
+        _blacklist = options.blacklistService or options.blacklist
     }, Service)
 end
 
@@ -146,6 +147,11 @@ function Service:list(options)
         return errorResult(Codes.MARKETPLACE_QUERY_FAILED or 'MARKETPLACE_QUERY_FAILED', 'Marketplace returned an invalid worker list')
     end
     local cards = {}
+    if self._blacklist and options.source ~= nil then
+        local filtered = self._blacklist:filterWorkers(options.source, workers, options)
+        if type(filtered) ~= 'table' or filtered.ok ~= true then return errorResult(Codes.MARKETPLACE_QUERY_FAILED or 'MARKETPLACE_QUERY_FAILED', 'Marketplace blacklist filtering failed') end
+        workers = filtered.value
+    end
     for _, worker in ipairs(workers) do
         if type(worker) == 'table' then cards[#cards + 1] = publicCard(worker, self._etaEstimator) end
     end

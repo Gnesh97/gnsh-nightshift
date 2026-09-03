@@ -9,7 +9,7 @@ local Booking = {}
 local participantTypes = { PLAYER = true, NPC = true, SYSTEM = true }
 local initiatorTypes = { PLAYER = true, NPC = true, SYSTEM = true, ADMIN = true }
 local statuses = {
-    DRAFT = true, QUOTED = true, OFFERED = true, ACCEPTED = true,
+    DRAFT = true, QUOTED = true, OFFERED = true, ACCEPTED = true, SCHEDULED = true,
     RESERVED = true, TRAVELLING = true, ARRIVED = true, ACTIVE = true,
     COMPLETED = true, SETTLED = true, DECLINED = true, CANCELLED = true,
     EXPIRED = true, INTERRUPTED = true

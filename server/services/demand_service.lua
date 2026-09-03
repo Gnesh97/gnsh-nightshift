@@ -160,6 +160,7 @@ function Service.new(options)
         _config = config,
         _clock = clock,
         _availability = options.availabilityService or options.workerAvailabilityService,
+        _feedback = options.feedbackService or options.demandHeatFeedbackService,
         _resolvers = {
             activeWorkers = options.activeWorkersResolver or options.supplyResolver,
             recentActivity = options.recentActivityResolver or options.activityResolver,
@@ -285,6 +286,20 @@ function Service:evaluate(request)
                 - heat * self._config.heatImpact
         }
     }
+    if self._feedback and type(self._feedback.apply) == 'function' then
+        local feedbackResult = self._feedback:apply({
+            district = district.id,
+            heat = heat,
+            demandScore = score,
+            activeWorkers = activeWorkers,
+            supplyCapacity = capacity
+        })
+        if type(feedbackResult) == 'table' and feedbackResult.ok == true then
+            value.feedback = feedbackResult.value
+            value.factors.feedback = feedbackResult.value.pricingModifier
+            value.explanation.feedback = feedbackResult.value.explanation
+        end
+    end
     return Result.ok(value, { explainable = true, serverAuthoritative = true })
 end
 

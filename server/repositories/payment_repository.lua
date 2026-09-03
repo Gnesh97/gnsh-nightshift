@@ -8,7 +8,7 @@ local Base = NightShift.Repositories.Base
 local Repository = {}
 Repository.__index = Repository
 
-local columns = { 'id', 'booking_id', 'idempotency_key', 'payment_type', 'amount_minor', 'currency', 'status', 'provider_reference', 'version', 'created_at', 'updated_at' }
+local columns = { 'id', 'booking_id', 'idempotency_key', 'payment_type', 'amount_minor', 'currency', 'status', 'provider_reference', 'commission_snapshot', 'version', 'created_at', 'updated_at' }
 local statuses = { PENDING = true, SUCCEEDED = true, COMMITTED = true, DECLINED = true, FAILED = true, UNKNOWN = true, REVERSED = true, REFUNDED = true }
 
 local function copy(value, seen)
@@ -41,6 +41,20 @@ local function tableName(value)
     return type(value) == 'string' and value:match('^[A-Za-z_][A-Za-z0-9_]*$') ~= nil
 end
 
+local function encodeSnapshot(value)
+    if value == nil then return nil end
+    if type(value) == 'string' then return value end
+    if type(json) ~= 'table' or type(json.encode) ~= 'function' then return nil end
+    local ok, encoded = pcall(json.encode, value)
+    return ok and type(encoded) == 'string' and encoded or nil
+end
+
+local function decodeSnapshot(value)
+    if type(value) ~= 'string' or value == '' or type(json) ~= 'table' or type(json.decode) ~= 'function' then return nil end
+    local ok, decoded = pcall(json.decode, value)
+    return ok and type(decoded) == 'table' and decoded or nil
+end
+
 local function normalize(value)
     if type(value) ~= 'table' then return nil, invalid('payment must be a table') end
     local bookingId = value.bookingId or value.booking_id
@@ -66,6 +80,7 @@ local function normalize(value)
         currency = currency,
         status = status,
         providerReference = value.providerReference or value.provider_reference,
+        commissionSnapshot = value.commissionSnapshot or decodeSnapshot(value.commission_snapshot),
         version = version,
         createdAt = value.createdAt or value.created_at,
         updatedAt = value.updatedAt or value.updated_at
@@ -145,7 +160,8 @@ function Repository:create(value)
         amount_minor = normalized.amountMinor,
         currency = normalized.currency,
         status = normalized.status,
-        provider_reference = normalized.providerReference
+        provider_reference = normalized.providerReference,
+        commission_snapshot = encodeSnapshot(normalized.commissionSnapshot)
     }
     return self._base:create(row)
 end

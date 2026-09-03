@@ -63,7 +63,7 @@ function Service:record(booking, oldState, newState, metadata)
     local event = {
         bookingId = booking.id,
         eventKey = eventKey,
-        eventType = 'STATE_CHANGED',
+        eventType = metadata.eventType or 'STATE_CHANGED',
         oldState = oldState:upper(),
         newState = newState:upper(),
         actorType = metadata.actorType,

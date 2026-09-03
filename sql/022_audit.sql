@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS nightshift_audit_log (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    actor_source INT UNSIGNED NULL,
+    actor_type VARCHAR(32) NULL,
+    actor_ref VARCHAR(160) NULL,
+    action VARCHAR(96) NOT NULL,
+    target_type VARCHAR(64) NULL,
+    target_ref VARCHAR(160) NULL,
+    result_status VARCHAR(16) NOT NULL DEFAULT 'UNKNOWN',
+    result_code VARCHAR(96) NULL,
+    reason VARCHAR(512) NULL,
+    correlation_id VARCHAR(128) NULL,
+    metadata_json LONGTEXT NULL,
+    occurred_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (id),
+    KEY idx_nightshift_audit_occurred (occurred_at, id),
+    KEY idx_nightshift_audit_action (action, occurred_at),
+    KEY idx_nightshift_audit_target (target_type, target_ref, occurred_at),
+    KEY idx_nightshift_audit_result (result_status, occurred_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

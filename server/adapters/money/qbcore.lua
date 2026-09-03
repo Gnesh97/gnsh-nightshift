@@ -7,10 +7,10 @@ local function invoke(container, method, ...)
     if type(container) ~= 'table' then return nil end
     local fn = container[method]
     if type(fn) ~= 'function' then return nil end
-    local ok, value = pcall(fn, container, ...)
-    if ok and value ~= nil then return value end
-    ok, value = pcall(fn, ...)
-    return ok and value or nil
+    local called, value = pcall(fn, container, ...)
+    if called and value ~= nil then return value end
+    called, value = pcall(fn, ...)
+    return called and value or nil
 end
 
 local function getCore(options)

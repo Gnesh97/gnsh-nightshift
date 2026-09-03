@@ -11,7 +11,7 @@ Repository.__index = Repository
 
 local profileColumns = {
     'id', 'profile_key', 'role', 'profile_type', 'display_name',
-    'appearance_profile_ref', 'budget_class', 'price_class', 'rating',
+    'appearance_profile_ref', 'budget_class', 'price_class', 'rating', 'review_count',
     'availability', 'traits', 'tags', 'home_district', 'active_district',
     'travel_mode', 'generation_seed', 'completed_bookings',
     'cancelled_bookings', 'no_show_bookings', 'last_active_at', 'expires_at',
@@ -179,6 +179,7 @@ function Repository:createProfile(profile)
         budget_class = row.budget_class,
         price_class = row.price_class,
         rating = row.rating,
+        review_count = row.review_count,
         availability = row.availability,
         traits = codec(self._options, 'encode', row.traits),
         tags = codec(self._options, 'encode', row.tags),
@@ -206,6 +207,7 @@ function Repository:updateProfileExpectedVersion(id, expectedVersion, changes)
         budgetClass = 'budget_class', budget_class = 'budget_class',
         priceClass = 'price_class', price_class = 'price_class',
         rating = 'rating', availability = 'availability',
+        reviewCount = 'review_count', review_count = 'review_count',
         traits = 'traits', tags = 'tags',
         homeDistrict = 'home_district', home_district = 'home_district',
         activeDistrict = 'active_district', active_district = 'active_district',
@@ -237,6 +239,20 @@ function Repository:findWorkerById(id)
     return Result.ok(mapWorker(result.value, self._options))
 end
 
+function Repository:findWorkerByProfileId(profileId)
+    if not integer(profileId, 1) then return invalid('NPC worker profile ID is invalid') end
+    local selectList, selectError = self._workerBase:_selectList()
+    if not selectList then return selectError end
+    local result = self._db:single(('SELECT %s FROM %s WHERE profile_id = ? LIMIT 1'):format(selectList, self._workerTable), { profileId })
+    if type(result) ~= 'table' or not result.ok then return result end
+    if result.value == nil then return Result.err(Codes.REPOSITORY_NOT_FOUND, 'NPC worker was not found', { profileId = profileId }) end
+    local row = result.value
+    local profileResult = self:findProfileById(row.profile_id)
+    if type(profileResult) ~= 'table' or not profileResult.ok then return profileResult end
+    row.profile = profileResult.value
+    return Result.ok(mapWorker(row, self._options))
+end
+
 function Repository:findWorkerByKey(workerKey)
     if not token(workerKey, 160) then return invalid('NPC worker key is invalid') end
     local selectList, selectError = self._workerBase:_selectList()
@@ -252,6 +268,41 @@ function Repository:findWorkerByKey(workerKey)
     if not mapped then return mapResult end
     return Result.ok(mapped, { workerKey = workerKey })
 end
+
+-- Restart recovery needs a bounded reverse lookup from a booking to its
+-- logical NPC worker. It deliberately returns the same safe worker DTO as the
+-- marketplace query and never exposes raw database rows.
+function Repository:findWorkersByBooking(bookingId, options)
+    if not text(bookingId, 160) and not integer(bookingId, 1) then
+        return invalid('NPC worker booking ID is invalid')
+    end
+    options = options or {}
+    if type(options) ~= 'table' then return invalid('NPC worker booking options are invalid') end
+    local limit = options.limit == nil and 100 or tonumber(options.limit)
+    local offset = options.offset == nil and 0 or tonumber(options.offset)
+    if not integer(limit, 1) or limit > 1000 or not integer(offset, 0) then
+        return invalid('NPC worker booking pagination is invalid')
+    end
+    local selectList, selectError = self._workerBase:_selectList()
+    if not selectList then return selectError end
+    local sql = ([[SELECT %s FROM %s
+        WHERE booking_id = ? AND state IN ('RESERVED', 'OCCUPIED')
+        ORDER BY id ASC LIMIT ? OFFSET ?]]):format(selectList, self._workerTable)
+    local result = self._db:query(sql, { tostring(bookingId), limit, offset })
+    if type(result) ~= 'table' or not result.ok then return result end
+    local values = {}
+    for index, row in ipairs(result.value or {}) do
+        local profileResult = self:findProfileById(row.profile_id)
+        if type(profileResult) ~= 'table' or not profileResult.ok then return profileResult end
+        row.profile = profileResult.value
+        local mapped, mapResult = mapWorker(row, self._options)
+        if not mapped then return mapResult end
+        values[index] = mapped
+    end
+    return Result.ok(values, { bookingId = tostring(bookingId), limit = limit, offset = offset })
+end
+
+Repository.findByBooking = Repository.findWorkersByBooking
 
 function Repository:createWorker(values)
     if type(values) ~= 'table' then return invalid('NPC worker values must be a table') end

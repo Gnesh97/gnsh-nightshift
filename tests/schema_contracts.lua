@@ -13,7 +13,16 @@ local files = {
     '011_booking_core.sql',
     '012_pricing_snapshots.sql',
     '013_location_resolver.sql',
-    '014_npc_marketplace.sql'
+    '014_npc_marketplace.sql',
+    '015_reputation.sql',
+    '016_reputation_compat.sql',
+    '017_scheduling.sql',
+    '018_blacklist.sql',
+    '019_agencies.sql',
+    '020_venues.sql',
+    '021_settlement_commission_snapshots.sql',
+    '022_audit.sql',
+    '023_idempotency.sql'
 }
 
 local contents, allParts = {}, {}
@@ -31,7 +40,8 @@ for _, tableName in ipairs({
     'nightshift_booking_events', 'nightshift_npc_profiles', 'nightshift_npc_workers',
     'nightshift_locations', 'nightshift_location_reservations', 'nightshift_room_reservations',
     'nightshift_booking_deposits', 'nightshift_payments', 'nightshift_reviews',
-    'nightshift_favorites', 'nightshift_client_worker_relationships'
+    'nightshift_favorites', 'nightshift_client_worker_relationships', 'nightshift_blacklist',
+    'nightshift_agencies', 'nightshift_venues', 'nightshift_venue_slots'
 }) do
     check(all:find(tableName, 1, true) ~= nil, 'required aggregate missing: ' .. tableName)
 end
@@ -49,4 +59,17 @@ check(contents['013_location_resolver.sql']:find('active_key', 1, true) ~= nil, 
 check(contents['014_npc_marketplace.sql']:find('profile_type', 1, true) ~= nil, 'NPC profile persistence type column missing')
 check(contents['014_npc_marketplace.sql']:find('price_class', 1, true) ~= nil, 'NPC marketplace price class column missing')
 check(contents['014_npc_marketplace.sql']:find('reservation_key', 1, true) ~= nil, 'NPC worker reservation key column missing')
-check(#NightShift.Migrations.DefinitionFiles == 14, 'S08 NPC marketplace migration must be registered')
+check(contents['015_reputation.sql']:find('reliability', 1, true) ~= nil, 'S17 client reliability migration must be registered')
+check(contents['015_reputation.sql']:find('trust_score', 1, true) ~= nil, 'S17 relationship trust migration must be registered')
+check(contents['016_reputation_compat.sql']:find('MODIFY COLUMN last_booking_id', 1, true) ~= nil, 'S17 relationship booking ID compatibility migration must be registered')
+check(contents['017_scheduling.sql']:find('idx_nightshift_bookings_scheduled_due', 1, true) ~= nil, 'S18 scheduled booking due index must be registered')
+check(contents['017_scheduling.sql']:find('idx_nightshift_bookings_no_show_due', 1, true) ~= nil, 'S18 no-show due index must be registered')
+check(contents['018_blacklist.sql']:find('nightshift_blacklist', 1, true) ~= nil, 'S19 blacklist table must be registered')
+check(contents['018_blacklist.sql']:find('uq_nightshift_blacklist_scope_worker', 1, true) ~= nil, 'S19 blacklist uniqueness constraint must be registered')
+check(contents['019_agencies.sql']:find('commission_rate', 1, true) ~= nil, 'S23 agency commission field must be registered')
+check(contents['020_venues.sql']:find('nightshift_venue_slots', 1, true) ~= nil, 'S23 venue slot aggregate must be registered')
+check(contents['021_settlement_commission_snapshots.sql']:find('commission_snapshot', 1, true) ~= nil, 'S23 settlement snapshot field must be registered')
+check(contents['022_audit.sql']:find('nightshift_audit_log', 1, true) ~= nil, 'S24 audit log table must be registered')
+check(contents['023_idempotency.sql']:find('nightshift_idempotency', 1, true) ~= nil, 'S25 idempotency table must be registered')
+check(contents['023_idempotency.sql']:find('uq_nightshift_idempotency_scope_key', 1, true) ~= nil, 'S25 idempotency uniqueness must be registered')
+check(#NightShift.Migrations.DefinitionFiles == 23, 'S25 idempotency migration must be registered')
