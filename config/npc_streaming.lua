@@ -22,6 +22,9 @@ NightShift.NpcStreamingConfig = {
         maxTracked = 512,
         leaseSeconds = 120
     },
-    modelAllowlist = {},
-    defaultModel = nil
+    -- Keep this list explicit so client-created projections can only use
+    -- known, shipped GTA models. Production boot validation rejects an empty
+    -- list or a default model that is not present in the allowlist.
+    modelAllowlist = { ['a_m_m_business_01'] = true },
+    defaultModel = 'a_m_m_business_01'
 }

@@ -9,6 +9,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Set up Lua
         uses: leafo/gh-actions-lua@v10
         with:
@@ -20,14 +22,45 @@ jobs:
         run: |
           set -euo pipefail
           find client server shared config tests -name '*.lua' -print0 | xargs -0 -n1 luac -p
+      - name: Lua measured coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v luarocks >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y luarocks
+          fi
+          luarocks --lua-version=5.4 install luacov
+          lua -lluacov tests/run.lua
+          luacov
+          changed=""
+          if [ -n "${GITHUB_BASE_REF:-}" ]; then
+            changed="$(git diff --name-only "origin/${GITHUB_BASE_REF}...HEAD" -- 'client/*.lua' 'client/**/*.lua' 'server/*.lua' 'server/**/*.lua' 'shared/*.lua' 'shared/**/*.lua' 'config/*.lua' 'config/**/*.lua' || true)"
+          elif [ -n "${GITHUB_EVENT_BEFORE:-}" ] && [ "${GITHUB_EVENT_BEFORE}" != "0000000000000000000000000000000000000000" ]; then
+            changed="$(git diff --name-only "${GITHUB_EVENT_BEFORE}" "${GITHUB_SHA}" -- 'client/*.lua' 'client/**/*.lua' 'server/*.lua' 'server/**/*.lua' 'shared/*.lua' 'shared/**/*.lua' 'config/*.lua' 'config/**/*.lua' || true)"
+          fi
+          if [ -z "$changed" ]; then
+            changed="$(git diff --name-only HEAD^ HEAD -- 'client/*.lua' 'client/**/*.lua' 'server/*.lua' 'server/**/*.lua' 'shared/*.lua' 'shared/**/*.lua' 'config/*.lua' 'config/**/*.lua' || true)"
+          fi
+          if [ -z "$changed" ]; then
+            echo 'coverage scope is empty; refusing to claim a coverage gate' >&2
+            exit 1
+          fi
+          scopes=()
+          while IFS= read -r path; do
+            [ -f "$path" ] || continue
+            scopes+=(--scope "$path")
+          done <<< "$changed"
+          [ "${#scopes[@]}" -gt 0 ] || { echo 'no changed Lua production modules found' >&2; exit 1; }
+          python scripts/coverage_gate.py luacov.report.out --minimum 80 "${scopes[@]}"
       - name: Web install and build
         working-directory: web
         run: |
           npm ci --ignore-scripts
-          npm run lint
+          npm run lint -- --deny-warnings
           npm run build
-      - name: Release builder tests
-        run: python -m unittest tests/release_builder_test.py
+      - name: Python contract tooling tests
+        run: python -m unittest discover -s tests -p '*_test.py' -v
       - name: Migration and locale checks
         shell: bash
         run: |
@@ -40,17 +73,13 @@ jobs:
           assert migrations, "no SQL migrations found"
           assert numbers == list(range(1, len(numbers) + 1)), numbers
 
-          locale_dirs = [path for path in Path(".").rglob("*") if path.is_dir() and path.name.lower() == "locales"]
-          if locale_dirs:
-              for locale_dir in locale_dirs:
-                  assert any(locale_dir.iterdir()), f"empty locale directory: {locale_dir}"
-          else:
-              print("No locale bundle is shipped; UI copy uses the typed web fallback.")
           PY
+          python scripts/validate_locales.py
           test "$(find config -maxdepth 1 -type f -name '*.lua' | wc -l)" -gt 0
           python scripts/build_release.py --version 0.0.0-ci --output "$RUNNER_TEMP/gnsh-release"
       - name: Secret scan
         shell: bash
         run: |
           set -euo pipefail
-          if command -v gitleaks >/dev/null 2>&1; then gitleaks detect --no-banner --redact; else echo 'gitleaks unavailable; skipped'; fi
+          python scripts/secret_scan.py .
+          if command -v gitleaks >/dev/null 2>&1; then gitleaks detect --no-banner --redact; fi

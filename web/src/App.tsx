@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react"
+/* oxlint-disable react(set-state-in-effect) -- effects mirror authoritative NUI responses and visibility state. */
+import { useCallback, useEffect, useRef, useState } from "react"
 import { ArrowRightIcon, Clock3Icon, MapPinIcon, ShieldCheckIcon, StarIcon, XIcon } from "lucide-react"
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -11,12 +12,70 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { nuiRequest } from "@/lib/nui"
-import type { BookingDraft, ClientBooking, ClientBookingPage, PriceQuote, WorkerCard } from "@/types/api"
+import type { BookingDraft, ClientBooking, ClientBookingPage, LocationOption, PriceQuote, WorkerCard } from "@/types/api"
 
 const districts = ["Tümü", "Vinewood", "Vespucci", "Del Perro"] as const
 const levels = ["Tümü", "Standard", "Premium"] as const
 
 const label = (value: string) => value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase())
+
+type FlowState = {
+  bookingId: string
+  status: ClientBooking["status"]
+  meetingMode: BookingDraft["meetingMode"]
+  travelKey?: string
+  profileKey?: string
+  generationToken?: string
+  entity?: number
+  networkId?: number
+  sessionToken?: string
+  actionToken?: string
+  actionTokenExpiresAt?: number
+  spawnConfirmed?: boolean
+}
+
+type HydrationAction =
+  | "client-mode:travel"
+  | "client-mode:spawn"
+  | "client-mode:spawn-confirm"
+  | "client-mode:arrival"
+  | "client-mode:session-start"
+  | "client-mode:session-complete"
+
+const generationBoundActions = new Set([
+  "client-mode:spawn-confirm",
+  "client-mode:arrival",
+  "client-mode:client-arrival",
+  "client-mode:npc-arrival",
+  "client-mode:pickup-arrival",
+])
+
+const hydrationAction = (status: ClientBooking["status"], previous?: FlowState): HydrationAction | null => {
+  if (previous?.actionToken && (!previous.actionTokenExpiresAt || previous.actionTokenExpiresAt > Date.now() + 5_000)) return null
+  if (status === "RESERVED") return "client-mode:travel"
+  if (status === "TRAVELLING") {
+    if (previous?.generationToken && previous.spawnConfirmed === true) return "client-mode:arrival"
+    if (previous?.generationToken) return "client-mode:spawn-confirm"
+    return "client-mode:spawn"
+  }
+  if (status === "ARRIVED") return "client-mode:session-start"
+  if (status === "ACTIVE") return previous?.sessionToken ? "client-mode:session-complete" : "client-mode:session-start"
+  return null
+}
+
+const normalizeMeetingMode = (value?: string): BookingDraft["meetingMode"] => {
+  const normalized = value?.toLowerCase().replaceAll("-", "_")
+  if (normalized === "pickup") return "pickup"
+  if (normalized === "meet_there") return "meet_there"
+  return "come_to_me"
+}
+
+const flowStatus: Record<ClientBooking["status"], string> = {
+  DRAFT: "Taslak", QUOTED: "Teklif", OFFERED: "Teklif", ACCEPTED: "Kabul edildi",
+  RESERVED: "Rezervasyon hazır", TRAVELLING: "Worker yolda", ARRIVED: "Varış doğrulandı",
+  ACTIVE: "Oturum aktif", COMPLETED: "Tamamlanıyor", SETTLED: "Tamamlandı",
+  DECLINED: "Reddedildi", CANCELLED: "İptal", EXPIRED: "Süresi doldu", INTERRUPTED: "Kesildi",
+}
 
 const formatBookingDate = (value?: number | string) => {
   if (value === undefined) return "Zamanlanmadı"
@@ -55,6 +114,7 @@ export default function App() {
   const previewVisible = import.meta.env.DEV && typeof window.GetParentResourceName !== "function"
   const [visible, setVisible] = useState(previewVisible)
   const [workers, setWorkers] = useState<WorkerCard[]>([])
+  const [locations, setLocations] = useState<LocationOption[]>([])
   const [district, setDistrict] = useState<(typeof districts)[number]>("Tümü")
   const [level, setLevel] = useState<(typeof levels)[number]>("Tümü")
   const [worker, setWorker] = useState<WorkerCard | null>(null)
@@ -66,22 +126,68 @@ export default function App() {
   const [bookingPage, setBookingPage] = useState<ClientBookingPage | null>(null)
   const [bookingsLoading, setBookingsLoading] = useState(true)
   const [bookingError, setBookingError] = useState<string | null>(null)
+  const [flow, setFlow] = useState<FlowState | null>(null)
+  const flowRef = useRef<FlowState | null>(null)
 
-  const loadBookings = useCallback(() => {
+  useEffect(() => {
+    flowRef.current = flow
+  }, [flow])
+
+  const refreshFlowToken = useCallback(async (bookingId: string, action: string, state?: FlowState) => {
+    const generationPayload = state && generationBoundActions.has(action) && state.generationToken && state.profileKey && state.travelKey
+      ? { generation: state.generationToken, profileKey: state.profileKey, travelKey: state.travelKey }
+      : {}
+    const result = await nuiRequest("security:action-token", { bookingId, action, ...generationPayload })
+    if (!result.ok || !result.value.token) return false
+    setFlow((previous) => previous?.bookingId === bookingId
+      ? { ...previous, actionToken: result.value.token, actionTokenExpiresAt: result.value.expiresAt }
+      : previous)
+    return true
+  }, [])
+
+  const hydrateFlowToken = useCallback(async (booking: ClientBooking, previous?: FlowState) => {
+    const action = hydrationAction(booking.status, previous)
+    if (!action) return
+    await refreshFlowToken(booking.bookingId, action, previous)
+  }, [refreshFlowToken])
+
+  const loadBookings = useCallback((hydrate = true) => {
     setBookingsLoading(true)
     void nuiRequest("client-bookings:list", { limit: 5, offset: 0 }).then((result) => {
       setBookingsLoading(false)
       if (result.ok) {
         setBookingPage(result.value)
+        const hydratedBooking = result.value.current ?? result.value.upcoming.find((item) => hydrationAction(item.status) !== null)
+        if (hydratedBooking) {
+          const previous = flowRef.current?.bookingId === hydratedBooking.bookingId ? flowRef.current : undefined
+          setFlow((previous) => ({
+            bookingId: hydratedBooking.bookingId,
+            status: hydratedBooking.status,
+            meetingMode: normalizeMeetingMode(hydratedBooking.meetingMode) ?? previous?.meetingMode ?? "come_to_me",
+            travelKey: previous?.travelKey,
+            profileKey: previous?.profileKey,
+            generationToken: previous?.generationToken,
+            entity: previous?.entity,
+            networkId: previous?.networkId,
+            sessionToken: previous?.sessionToken,
+            actionToken: previous?.actionToken,
+            actionTokenExpiresAt: previous?.actionTokenExpiresAt,
+            spawnConfirmed: previous?.spawnConfirmed,
+          }))
+          if (hydrate) void hydrateFlowToken(hydratedBooking, previous)
+        } else {
+          setFlow(null)
+        }
         setBookingError(null)
       } else {
         setBookingError(result.error.message)
       }
     })
-  }, [])
+  }, [hydrateFlowToken])
 
   useEffect(() => {
     let mounted = true
+    // oxlint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true)
     void nuiRequest("marketplace:list", {
       district: district === "Tümü" ? undefined : district,
@@ -91,6 +197,7 @@ export default function App() {
       setLoading(false)
       if (result.ok) {
         setWorkers(result.value.items)
+        setLocations(result.value.locations ?? [])
         setMessage(null)
       } else {
         setMessage(result.error.message)
@@ -100,16 +207,21 @@ export default function App() {
   }, [district, level])
 
   useEffect(() => {
+    // oxlint-disable-next-line react-hooks/set-state-in-effect
     loadBookings()
   }, [loadBookings])
 
   useEffect(() => {
     const receiveMessage = (event: MessageEvent<{ type?: string; visible?: boolean }>) => {
-      if (event.data?.type === "nightshift:visibility") setVisible(event.data.visible === true)
+      if (event.data?.type === "nightshift:visibility") {
+        const nextVisible = event.data.visible === true
+        setVisible(nextVisible)
+        if (nextVisible) loadBookings()
+      }
     }
     window.addEventListener("message", receiveMessage)
     return () => window.removeEventListener("message", receiveMessage)
-  }, [])
+  }, [loadBookings])
 
   useEffect(() => {
     const documentRoot = document.documentElement
@@ -118,10 +230,18 @@ export default function App() {
   }, [visible])
 
   const selectWorker = (candidate: WorkerCard) => {
+    const defaultLocation = locations.find((item) => item.meetingModes.includes("COME_TO_ME")) ?? locations[0]
     setWorker(candidate)
     setQuote(null)
     setMessage(null)
-    setDraft({ workerId: candidate.workerId, packageId: candidate.packages[0], meetingMode: "come_to_me", locationId: "configured_default" })
+    setDraft({ workerId: candidate.workerId, packageId: candidate.packages[0], meetingMode: "come_to_me", locationId: defaultLocation?.locationId ?? "" })
+  }
+
+  const setMeetingMode = (meetingMode: BookingDraft["meetingMode"]) => {
+    if (!draft) return
+    const serverMode = meetingMode.toUpperCase()
+    const compatible = locations.find((item) => item.meetingModes.includes(serverMode))
+    setDraft({ ...draft, meetingMode, locationId: compatible?.locationId ?? draft.locationId })
   }
 
   const requestQuote = async () => {
@@ -140,17 +260,79 @@ export default function App() {
   const confirm = async () => {
     if (!quote) return
     setPending(true)
-    const result = await nuiRequest("booking:confirm", { quoteId: quote.quoteId })
+    const result = await nuiRequest("booking:confirm", { quoteId: quote.quoteId, actionToken: quote.actionToken })
     setPending(false)
     if (result.ok) {
       setMessage(`Booking #${result.value.bookingId} rezerve edildi.`)
+      setFlow({ bookingId: result.value.bookingId, status: "RESERVED", meetingMode: draft?.meetingMode ?? "come_to_me", actionToken: result.value.actionToken, actionTokenExpiresAt: result.value.actionTokenExpiresAt })
       setQuote(null)
       setWorker(null)
       setDraft(null)
-      loadBookings()
+      loadBookings(false)
     } else {
       setMessage(result.error.message)
     }
+  }
+
+  const runFlowAction = async () => {
+    if (!flow || pending) return
+    setPending(true)
+    let result
+    let action: "client-mode:travel" | "client-mode:spawn" | "client-mode:spawn-confirm" | "client-mode:arrival" | "client-mode:session-start" | "client-mode:session-complete"
+    if (flow.status === "RESERVED") {
+      action = "client-mode:travel"
+      result = await nuiRequest(action, { bookingId: flow.bookingId, actionToken: flow.actionToken })
+    } else if (flow.status === "TRAVELLING" && !flow.generationToken) {
+      action = "client-mode:spawn"
+      result = await nuiRequest(action, { bookingId: flow.bookingId, actionToken: flow.actionToken })
+    } else if (flow.status === "TRAVELLING" && !flow.spawnConfirmed) {
+      action = "client-mode:spawn-confirm"
+      result = await nuiRequest(action, {
+        bookingId: flow.bookingId, travelKey: flow.travelKey, profileKey: flow.profileKey,
+        generationToken: flow.generationToken, entity: flow.entity, networkId: flow.networkId,
+        actionToken: flow.actionToken,
+      })
+    } else if (flow.status === "TRAVELLING") {
+      action = "client-mode:arrival"
+      result = await nuiRequest(action, {
+        bookingId: flow.bookingId, travelKey: flow.travelKey, profileKey: flow.profileKey,
+        generationToken: flow.generationToken, entity: flow.entity, networkId: flow.networkId,
+        actionToken: flow.actionToken,
+      })
+    } else if (flow.status === "ARRIVED") {
+      action = "client-mode:session-start"
+      result = await nuiRequest(action, { bookingId: flow.bookingId, meetingMode: flow.meetingMode, actionToken: flow.actionToken })
+    } else if (flow.status === "ACTIVE") {
+      action = flow.sessionToken ? "client-mode:session-complete" : "client-mode:session-start"
+      result = flow.sessionToken
+        ? await nuiRequest(action, { bookingId: flow.bookingId, token: flow.sessionToken, actionToken: flow.actionToken })
+        : await nuiRequest(action, { bookingId: flow.bookingId, meetingMode: flow.meetingMode, actionToken: flow.actionToken })
+    } else {
+      setPending(false)
+      return
+    }
+    setPending(false)
+    if (!result.ok) {
+      // authorizeCritical consumes one-time tokens before invoking the service.
+      // A transient server/database failure must not strand the flow with a
+      // replayed token; obtain a fresh actor-bound token for the same action.
+      const refreshed = await refreshFlowToken(flow.bookingId, action, flow)
+      setMessage(`${result.error.code}: ${result.error.message}${refreshed ? " (işlem anahtarı yenilendi)" : ""}`)
+      return
+    }
+    const value = result.value as {
+      booking?: { bookingId?: string; status?: ClientBooking["status"] }
+      travel?: { travelKey?: string; profileKey?: string; state?: string }
+      spawn?: { generationToken?: string; entity?: number; networkId?: number; profileKey?: string }
+      token?: string
+      actionToken?: string
+      actionTokenExpiresAt?: number
+      session?: { token?: string }
+    }
+    const nextStatus = value.booking?.status ?? (value.session ? "ACTIVE" : flow.status === "TRAVELLING" ? "ARRIVED" : flow.status === "RESERVED" ? "TRAVELLING" : "SETTLED")
+    setFlow({ ...flow, bookingId: value.booking?.bookingId ?? flow.bookingId, status: nextStatus, travelKey: value.travel?.travelKey ?? flow.travelKey, profileKey: value.travel?.profileKey ?? value.spawn?.profileKey ?? flow.profileKey, generationToken: value.spawn?.generationToken ?? flow.generationToken, entity: value.spawn?.entity ?? flow.entity, networkId: value.spawn?.networkId ?? flow.networkId, sessionToken: value.token ?? value.session?.token ?? flow.sessionToken, actionToken: value.actionToken ?? flow.actionToken, actionTokenExpiresAt: value.actionTokenExpiresAt ?? flow.actionTokenExpiresAt, spawnConfirmed: action === "client-mode:spawn" ? false : action === "client-mode:spawn-confirm" ? true : flow.spawnConfirmed })
+    setMessage(`Sunucu durumu: ${flowStatus[nextStatus]}`)
+    loadBookings(false)
   }
 
   const close = () => {
@@ -175,7 +357,7 @@ export default function App() {
        </header>
 
         <section className="border-b border-border px-4 py-5 md:px-8 md:py-6" aria-labelledby="booking-heading">
-          <div className="mb-4 flex items-end justify-between gap-4"><div><h2 id="booking-heading" className="text-xl leading-tight font-normal tracking-[-0.02em] text-foreground">Rezervasyonlar</h2><p className="mt-1 text-sm text-muted-foreground">Aktif, yaklaşan ve geçmiş isteklerin.</p></div><Button variant="outline" className="min-h-10 rounded-none" onClick={loadBookings} disabled={bookingsLoading}>{bookingsLoading ? "Yükleniyor…" : "Yenile"}</Button></div>
+          <div className="mb-4 flex items-end justify-between gap-4"><div><h2 id="booking-heading" className="text-xl leading-tight font-normal tracking-[-0.02em] text-foreground">Rezervasyonlar</h2><p className="mt-1 text-sm text-muted-foreground">Aktif, yaklaşan ve geçmiş isteklerin.</p></div><Button variant="outline" className="min-h-10 rounded-none" onClick={() => loadBookings()} disabled={bookingsLoading}>{bookingsLoading ? "Yükleniyor…" : "Yenile"}</Button></div>
           {bookingsLoading && <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">{[1, 2, 3].map((item) => <Skeleton key={item} className="h-40 rounded-none bg-muted" />)}</div>}
           {!bookingsLoading && bookingError && <p className="border border-border bg-muted p-4 text-sm leading-relaxed text-muted-foreground">{bookingError}</p>}
           {!bookingsLoading && !bookingError && bookingPage && <div className="flex flex-col gap-5">
@@ -186,6 +368,13 @@ export default function App() {
           </div>}
         </section>
 
+        {flow && <section className="border-b border-border bg-muted/30 px-4 py-5 md:px-8 md:py-6" aria-live="polite">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div><p className="text-xs tracking-[0.16em] text-muted-foreground uppercase">Canlı booking akışı · #{flow.bookingId}</p><h2 className="mt-1 text-xl font-normal">{flowStatus[flow.status]}</h2><p className="mt-1 text-sm text-muted-foreground">Buluşma: {label(flow.meetingMode)} · Durum yalnızca sunucudan güncellenir.</p></div>
+            {flow.status !== "SETTLED" && <Button className="min-h-11 rounded-none" disabled={pending} onClick={() => void runFlowAction()}>{pending && <Spinner data-icon="inline-start" />}{flow.status === "RESERVED" ? "Yola çıkışı başlat" : flow.status === "TRAVELLING" && !flow.generationToken ? "Worker'ı hazırla" : flow.status === "TRAVELLING" && !flow.spawnConfirmed ? "NPC kaydını onayla" : flow.status === "TRAVELLING" ? "Varışı bildir" : flow.status === "ARRIVED" ? "Oturumu başlat" : flow.status === "ACTIVE" ? "Oturumu tamamla" : "Bekleniyor"}</Button>}
+          </div>
+        </section>}
+
         <div className="grid grid-cols-12 gap-4 px-4 py-5 md:gap-8 md:px-8 md:py-6">
           <aside className="col-span-12 flex flex-col gap-5 md:col-span-3">
             <div className="flex flex-col gap-2"><span className="text-xs tracking-[0.16em] text-muted-foreground uppercase">Bölge</span><ToggleGroup value={[district]} onValueChange={(value) => value[0] && setDistrict(value[0] as (typeof districts)[number])} spacing={0} className="w-full flex-wrap">{districts.map((item) => <ToggleGroupItem key={item} value={item} variant="outline" className="min-h-11 grow">{item}</ToggleGroupItem>)}</ToggleGroup></div>
@@ -194,7 +383,7 @@ export default function App() {
             <div className="flex items-start gap-3 text-sm leading-relaxed text-muted-foreground"><ShieldCheckIcon className="mt-0.5 shrink-0" /><p>Liste yalnızca herkese açık worker kartlarını gösterir. Özel profil ve ödeme verisi tarayıcıya verilmez.</p></div>
           </aside>
 
-          <section className="col-span-12 md:col-span-9" aria-live="polite">
+        <section className="col-span-12 md:col-span-9" aria-live="polite">
             <div className="mb-4 flex items-end justify-between gap-4"><div><h2 className="text-xl leading-tight font-normal tracking-[-0.02em] text-foreground">Marketplace</h2><p className="mt-1 text-sm text-muted-foreground">{loading ? "Uygunluk yenileniyor…" : `${workers.length} uygun worker`}</p></div><Badge variant="secondary" className="rounded-none tracking-[0.12em] uppercase">Canlı durum</Badge></div>
             {message && <p className="mb-4 border border-border bg-muted p-3 text-sm leading-relaxed">{message}</p>}
             {loading && <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">{[1, 2, 3, 4].map((item) => <Skeleton key={item} className="h-64 rounded-none bg-muted" />)}</div>}
@@ -204,7 +393,7 @@ export default function App() {
         </div>
       </section>
 
-      <Sheet open={Boolean(worker)} onOpenChange={(open) => !open && setWorker(null)}><SheetContent side="right" className="w-full border-border bg-popover sm:max-w-md"><SheetHeader className="border-b border-border p-6"><SheetTitle className="text-2xl font-light tracking-[-0.03em]">Booking isteği</SheetTitle><SheetDescription>{worker ? `${worker.displayName} için süreli teklif al.` : ""}</SheetDescription></SheetHeader>{worker && draft && <div className="flex flex-1 flex-col gap-6 overflow-y-auto p-6"><div className="flex items-center justify-between border-y border-border py-4 text-sm"><span className="text-muted-foreground">Seçilen worker</span><span>{worker.displayName}</span></div><div className="flex flex-col gap-2"><span className="text-xs tracking-[0.16em] text-muted-foreground uppercase">Paket</span><ToggleGroup value={[draft.packageId]} onValueChange={(value) => value[0] && setDraft({ ...draft, packageId: value[0] })} spacing={0} className="w-full flex-wrap">{worker.packages.map((item) => <ToggleGroupItem key={item} value={item} variant="outline" className="min-h-11 grow">{label(item)}</ToggleGroupItem>)}</ToggleGroup></div><div className="flex flex-col gap-2"><span className="text-xs tracking-[0.16em] text-muted-foreground uppercase">Buluşma biçimi</span><ToggleGroup value={[draft.meetingMode]} onValueChange={(value) => value[0] && setDraft({ ...draft, meetingMode: value[0] as BookingDraft["meetingMode"] })} spacing={0} className="w-full flex-wrap"><ToggleGroupItem value="come_to_me" variant="outline" className="min-h-11 grow">Gel</ToggleGroupItem><ToggleGroupItem value="pickup" variant="outline" className="min-h-11 grow">Al</ToggleGroupItem><ToggleGroupItem value="meet_there" variant="outline" className="min-h-11 grow">Buluş</ToggleGroupItem></ToggleGroup></div>{quote ? <div className="border border-primary/50 bg-primary/10 p-4"><span className="text-xs tracking-[0.16em] text-muted-foreground uppercase">Sunucu teklifi</span><div className="mt-2 flex items-end justify-between"><strong className="text-3xl font-light tabular-nums">{quote.currency}{quote.amount}</strong><span className="text-sm text-muted-foreground">{new Date(quote.expiresAt).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}’e kadar</span></div></div> : <p className="text-sm leading-relaxed text-muted-foreground">Teklif tutarı, seçimin ve anlık uygunluğun sunucu tarafındaki hesabından gelir.</p>}<div className="mt-auto flex flex-col gap-3"><Button className="min-h-11" disabled={pending} onClick={() => void requestQuote()}>{pending && <Spinner data-icon="inline-start" />}Teklif al</Button>{quote && <Button variant="outline" className="min-h-11" disabled={pending} onClick={() => void confirm()}>{pending && <Spinner data-icon="inline-start" />}Teklifi onayla</Button>}</div></div>}</SheetContent></Sheet>
+        <Sheet open={Boolean(worker)} onOpenChange={(open) => !open && setWorker(null)}><SheetContent side="right" className="w-full border-border bg-popover sm:max-w-md"><SheetHeader className="border-b border-border p-6"><SheetTitle className="text-2xl font-light tracking-[-0.03em]">Booking isteği</SheetTitle><SheetDescription>{worker ? `${worker.displayName} için süreli teklif al.` : ""}</SheetDescription></SheetHeader>{worker && draft && <div className="flex flex-1 flex-col gap-6 overflow-y-auto p-6"><div className="flex items-center justify-between border-y border-border py-4 text-sm"><span className="text-muted-foreground">Seçilen worker</span><span>{worker.displayName}</span></div><div className="flex flex-col gap-2"><span className="text-xs tracking-[0.16em] text-muted-foreground uppercase">Paket</span><ToggleGroup value={[draft.packageId]} onValueChange={(value) => value[0] && setDraft({ ...draft, packageId: value[0] })} spacing={0} className="w-full flex-wrap">{worker.packages.map((item) => <ToggleGroupItem key={item} value={item} variant="outline" className="min-h-11 grow">{label(item)}</ToggleGroupItem>)}</ToggleGroup></div><div className="flex flex-col gap-2"><span className="text-xs tracking-[0.16em] text-muted-foreground uppercase">Buluşma biçimi</span><ToggleGroup value={[draft.meetingMode]} onValueChange={(value) => value[0] && setMeetingMode(value[0] as BookingDraft["meetingMode"])} spacing={0} className="w-full flex-wrap"><ToggleGroupItem value="come_to_me" variant="outline" className="min-h-11 grow">Gel</ToggleGroupItem><ToggleGroupItem value="pickup" variant="outline" className="min-h-11 grow">Al</ToggleGroupItem><ToggleGroupItem value="meet_there" variant="outline" className="min-h-11 grow">Buluş</ToggleGroupItem></ToggleGroup></div><div className="flex flex-col gap-2"><span className="text-xs tracking-[0.16em] text-muted-foreground uppercase">Konum</span>{locations.filter((item) => item.meetingModes.includes(draft.meetingMode.toUpperCase())).length > 0 ? <ToggleGroup value={draft.locationId ? [draft.locationId] : []} onValueChange={(value) => value[0] && setDraft({ ...draft, locationId: value[0] })} spacing={0} className="w-full flex-wrap">{locations.filter((item) => item.meetingModes.includes(draft.meetingMode.toUpperCase())).map((item) => <ToggleGroupItem key={item.locationId} value={item.locationId} variant="outline" className="min-h-11 grow">{item.label}</ToggleGroupItem>)}</ToggleGroup> : <p className="border border-dashed border-border p-3 text-sm text-muted-foreground">Sunucudan uygun konum bekleniyor.</p>}</div>{quote ? <div className="border border-primary/50 bg-primary/10 p-4"><span className="text-xs tracking-[0.16em] text-muted-foreground uppercase">Sunucu teklifi</span><div className="mt-2 flex items-end justify-between"><strong className="text-3xl font-light tabular-nums">{quote.currency}{quote.amount}</strong><span className="text-sm text-muted-foreground">{new Date(quote.expiresAt).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}’e kadar</span></div></div> : <p className="text-sm leading-relaxed text-muted-foreground">Teklif tutarı, seçimin ve anlık uygunluğun sunucu tarafındaki hesabından gelir.</p>}<div className="mt-auto flex flex-col gap-3"><Button className="min-h-11" disabled={pending || !draft.locationId} onClick={() => void requestQuote()}>{pending && <Spinner data-icon="inline-start" />}Teklif al</Button>{quote && <Button variant="outline" className="min-h-11" disabled={pending} onClick={() => void confirm()}>{pending && <Spinner data-icon="inline-start" />}Teklifi onayla</Button>}</div></div>}</SheetContent></Sheet>
     </main>
   )
 }

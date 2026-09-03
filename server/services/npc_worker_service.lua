@@ -215,11 +215,18 @@ function Service:ensurePool(options)
     local values = {}
     for index = 1, target do
         local seed = tostring(options.seed or 'pool') .. ':' .. tostring(index)
+        local workerKey = 'npc-worker:' .. seed
+        local existing = self:get(workerKey)
+        if type(existing) == 'table' and existing.ok then
+            values[index] = existing.value
+            goto continue
+        end
         local generated = self._generator:generate({ role = 'WORKER', seed = seed, profileKey = 'npc-worker:' .. seed })
         if type(generated) ~= 'table' or not generated.ok then return generated end
-        local registered = self:register(generated.value, { workerKey = 'npc-worker:' .. seed })
+        local registered = self:register(generated.value, { workerKey = workerKey })
         if type(registered) ~= 'table' or not registered.ok then return registered end
         values[index] = registered.value
+        ::continue::
     end
     return Result.ok(values, { count = #values })
 end
@@ -228,6 +235,12 @@ function Service:get(workerKey)
     if not token(workerKey, 160) then return invalid('NPC worker key is invalid') end
     local expiry = self:expire()
     if type(expiry) == 'table' and not expiry.ok then return expiry end
+    -- Prefer the immutable in-process snapshot once a worker has been
+    -- materialized. This keeps repeated ensurePool calls idempotent even when
+    -- a lightweight adapter cannot echo newly-created rows immediately;
+    -- a fresh process still falls through to the repository lookup below.
+    local cached = self._workers[workerKey]
+    if cached then return Result.ok(copy(cached)) end
     if self._repository and type(self._repository.findWorkerByKey) == 'function' then
         local result = self._repository:findWorkerByKey(workerKey)
         if type(result) == 'table' and result.ok then
@@ -240,8 +253,6 @@ function Service:get(workerKey)
         if result.error and result.error.code ~= Codes.REPOSITORY_NOT_FOUND then return result end
         self._workers[workerKey] = nil
     end
-    local worker = self._workers[workerKey]
-    if worker then return Result.ok(copy(worker)) end
     return workerError(Codes.NPC_WORKER_NOT_FOUND, 'NPC worker was not found', { workerKey = workerKey })
 end
 

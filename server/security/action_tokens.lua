@@ -105,16 +105,20 @@ local function configured(options)
     local tokenEnabled = tokenConfig.enabled
     if tokenEnabled == nil then tokenEnabled = true end
     local enforce = tokenConfig.enforce
-    if enforce == nil then enforce = false end
-    if type(enabled) ~= 'boolean' or type(tokenEnabled) ~= 'boolean' or type(enforce) ~= 'boolean' then
+    if enforce == nil then enforce = true end
+    local developmentOptOut = tokenConfig.developmentOptOut == true
+    if type(enabled) ~= 'boolean' or type(tokenEnabled) ~= 'boolean' or type(enforce) ~= 'boolean'
+        or (tokenConfig.developmentOptOut ~= nil and type(tokenConfig.developmentOptOut) ~= 'boolean') then
         return nil, 'action token enabled flags must be boolean'
     end
+    if options.environment == 'development' and developmentOptOut then enforce = false end
     local ttl = integer(tokenConfig.ttlSeconds or 90, 1, 3600)
     local maxActive = integer(tokenConfig.maxActive or 4096, 1, 100000)
     local maxTokenLength = integer(tokenConfig.maxTokenLength or 192, 64, 512)
     if not ttl or not maxActive or not maxTokenLength then return nil, 'action token settings are invalid' end
     return { enabled = enabled and tokenEnabled, enforce = enforce, ttlSeconds = ttl,
-        maxActive = maxActive, maxTokenLength = maxTokenLength }
+        maxActive = maxActive, maxTokenLength = maxTokenLength,
+        developmentOptOut = developmentOptOut }
 end
 
 function Store.new(options)
@@ -197,8 +201,13 @@ function Store:issue(actor, bookingId, action, options)
     if not ttl then return invalid('action token TTL is invalid') end
     local token = self:_newToken()
     if not token then return Result.err(Codes.ACTION_TOKEN_UNAVAILABLE, 'action token nonce generation failed') end
+    local generation = options.generation
+    if generation ~= nil and not nonceValue(tostring(generation), 240) then
+        return invalid('action token generation binding is invalid')
+    end
     self._records[token] = {
         actor = actorReference, bookingId = normalizedBooking, action = normalizedAction,
+        generation = generation and tostring(generation) or nil,
         issuedAt = now, expiresAt = now + ttl, used = false
     }
     self._active = self._active + 1
@@ -231,9 +240,20 @@ function Store:verify(token, actor, bookingId, action, options)
     if record.actor ~= actorReference then return Result.err(Codes.ACTION_TOKEN_ACTOR_MISMATCH, 'action token actor does not match') end
     if record.bookingId ~= normalizedBooking then return Result.err(Codes.ACTION_TOKEN_BOOKING_MISMATCH, 'action token booking does not match') end
     if record.action ~= normalizedAction then return Result.err(Codes.ACTION_TOKEN_ACTION_MISMATCH, 'action token action does not match') end
+    if record.generation ~= nil and tostring(options.generation or '') ~= record.generation then
+        return Result.err(Codes.ACTION_TOKEN_ACTION_MISMATCH, 'action token generation does not match')
+    end
     return Result.ok({
         bookingId = record.bookingId, action = record.action, issuedAt = record.issuedAt, expiresAt = record.expiresAt
     }, { verified = true, oneTime = true })
+end
+
+function Store:authorize(actor, bookingId, action, token, options)
+    if not self:requires() then return Result.ok({ bypassed = true }, { developmentOptOut = self._config.developmentOptOut == true }) end
+    if not text(token, self._config.maxTokenLength) then
+        return Result.err(Codes.ACTION_TOKEN_INVALID, 'action token is required')
+    end
+    return self:consume(token, actor, bookingId, action, options)
 end
 
 function Store:consume(token, actor, bookingId, action, options)

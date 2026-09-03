@@ -95,6 +95,7 @@ load('client/npc/entity_registry.lua')
 load('client/npc/spawn.lua')
 load('client/npc/navigation.lua')
 load('client/npc/despawn.lua')
+load('client/npc/coordinator.lua')
 load('client/worker_mode/customer_candidates.lua')
 load('server/domain/district.lua')
 load('server/services/district_service.lua')
@@ -276,6 +277,8 @@ do
 end
 
 check(NightShift.Client.readiness == 'READY', 'client lifecycle should initialize ready')
+load('tests/rem_001_readiness_contracts.lua')
+load('tests/rem_002_npc_contracts.lua')
 
 local function validConfig(overrides)
     local value = NightShift.Validators.copy(NightShift.DefaultConfig)
@@ -355,7 +358,8 @@ end
 
 do
     local ok = NightShift.Server.bootstrap()
-    check(ok and NightShift.Server.readiness == 'READY', 'default development config should boot')
+    check(ok and NightShift.Server.readiness == NightShift.Enums.Readiness.DEGRADED,
+        'default development config without runtime dependencies should boot degraded')
 end
 
 print('NS-010/NS-011 tests passed: lifecycle, config validation, normalization, and fail-closed provider selection')

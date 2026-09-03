@@ -455,6 +455,8 @@ local function safeSpawn(value)
     if model then output.model = model end
     local candidate = safeCandidate(value.candidate)
     if candidate then output.candidate = candidate end
+    local target = safeCandidate(value.target)
+    if target then output.target = target end
     local generation = integer(value.generation, 1, 2147483647)
     if generation then output.generation = generation end
     local bookingId = normalizeBookingId(value.bookingId)
@@ -575,6 +577,12 @@ local function safeNuiValue(value)
     if safeRef(value.generationToken, 240) then output.generationToken = tostring(value.generationToken) end
     if type(value.entity) == 'number' then output.entity = integer(value.entity, 0, 2147483647) end
     if type(value.networkId) == 'number' then output.networkId = integer(value.networkId, 0, 2147483647) end
+    local actionToken = safeRef(value.actionToken or value.action_token, 240)
+    if actionToken then
+        output.actionToken = tostring(actionToken)
+        local expiresAt = integer(value.actionTokenExpiresAt or value.action_token_expires_at, 0, 2147483647)
+        if expiresAt then output.actionTokenExpiresAt = expiresAt end
+    end
     return output
 end
 

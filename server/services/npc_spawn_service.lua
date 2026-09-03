@@ -277,6 +277,8 @@ function Service:request(playerSource, request)
         end
         if written.ok then stateBag = written.value end
     end
+    local target = type(travel.resolvedDestination) == 'table'
+        and normalizeCandidate(travel.resolvedDestination.worldTarget) or nil
     return Result.ok({
         serverOwned = true,
         spawnKey = binding.generationToken,
@@ -288,6 +290,7 @@ function Service:request(playerSource, request)
         model = model,
         appearanceProfileRef = appearanceProfileRef,
         candidate = copy(candidate),
+        target = copy(target),
         entity = entity or binding.entity,
         networkId = networkId or binding.networkId,
         streamingLease = copy(streamingLease),

@@ -1,6 +1,7 @@
 local function check(value, message) assert(value, message) end
 
-check(NightShift.Server.readiness == 'READY', 'server lifecycle should auto-start on resource load')
+check(NightShift.Server.readiness == NightShift.Enums.Readiness.DEGRADED,
+    'server lifecycle should expose DEGRADED when optional runtime dependencies are deferred')
 
 do
     local source = { id = 1 }

@@ -138,7 +138,9 @@ do
         local disabled = NightShift.ServerBootstrap.applyRuntimeConfig(source)
         check(disabled == source and disabled.features.persistence == false, 'disabled runtime persistence must preserve the source config')
 
-        _G.GetConvar = function() return 'true' end
+        _G.GetConvar = function(name, fallback)
+            return name == 'nightshift_persistence' and 'true' or fallback
+        end
         _G.MySQL = { scalar = { await = function() return 1 end } }
         local adapter = NightShift.ServerBootstrap.createRuntimeDatabaseAdapter()
         check(adapter and adapter:healthCheck().ok, 'runtime oxmysql adapter must expose a healthy normalized database contract')

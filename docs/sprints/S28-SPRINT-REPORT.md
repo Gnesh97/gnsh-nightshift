@@ -16,4 +16,9 @@
 - Framework notes: core changes are framework-blind; no QBCore/Qbox/ESX-specific code added.
 - Known issues: the FXServer `resmon`/profiler pass in `tests/scenarios/LOAD_MATRIX.md` remains an operator-side runtime measurement.
 - Deferred items: S29 framework parity matrices and S30 release packaging are not started.
-- Exit Gate result: PASS
+- Exit Gate result: CONTRACT PASS; runtime profiler evidence BLOCKED
+
+The contract suite and static checks pass locally. The release/runtime gate is
+not closed until an operator records the target FXServer OneSync mode, load
+profile, resmon/tick measurements, owner-migration evidence, and cleanup
+verification from `tests/scenarios/LOAD_MATRIX.md`.

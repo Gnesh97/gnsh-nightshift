@@ -63,7 +63,10 @@ end
 
 do
     local attempts = 0
-    local retryBus = NightShift.EventBus.new({ retryLimit = 3 })
+    local retryBus = NightShift.EventBus.new({
+        retryLimit = 3,
+        logger = NightShift.Logger.new({ sink = function() end })
+    })
     retryBus:subscribe('retryable', function()
         attempts = attempts + 1
         if attempts == 1 then return NightShift.Result.err('TEMPORARY', 'retry me') end

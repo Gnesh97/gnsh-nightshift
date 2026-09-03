@@ -15,6 +15,34 @@ local requestTimeoutMs = 10000
 local maxPendingRequests = 16
 local pendingCount = 0
 
+local function dispatchNpcSpawn(value)
+    local coordinator = NightShift.ClientNpcCoordinatorInstance
+    if type(coordinator) ~= 'table' or type(coordinator.handleAuthorization) ~= 'function'
+        or type(value) ~= 'table' or type(value.spawn) ~= 'table' then return end
+    local raw = value.spawn
+    local authorization = {
+        serverOwned = raw.serverOwned == true,
+        profileKey = raw.profileKey or value.profileKey,
+        generationToken = raw.generationToken or value.generationToken,
+        generation = raw.generation,
+        travelKey = raw.travelKey or value.travelKey,
+        bookingId = raw.bookingId or value.bookingId,
+        model = raw.model,
+        candidate = raw.candidate,
+        target = raw.target,
+        entity = raw.entity or value.entity,
+        networkId = raw.networkId or value.networkId,
+        owner = raw.owner
+    }
+    local result = coordinator:handleAuthorization(authorization)
+    if result.ok then return end
+    local send = rawget(_G, 'SendNUIMessage')
+    local errorValue = result.error or {}
+    if type(send) == 'function' then
+        pcall(send, { type = 'nightshift:npc-error', code = errorValue.code, message = errorValue.message })
+    end
+end
+
 local function validRequestId(value)
     return type(value) == 'string' and #value > 0 and #value <= 96 and value:match('^[%w%-%_:]+$') ~= nil
 end
@@ -88,6 +116,9 @@ if type(registerNetEvent) == 'function' and type(addEventHandler) == 'function' 
         local callback = validRequestId(requestId) and pending[requestId] or nil
         if type(callback) ~= 'function' then return end
         removePending(requestId, callback)
+        if type(response) == 'table' and response.ok == true then
+            dispatchNpcSpawn(response.value)
+        end
         callback(type(response) == 'table' and response or resultError(requestId, 'NUI_RESPONSE_INVALID', 'Server returned an invalid response'))
     end)
 

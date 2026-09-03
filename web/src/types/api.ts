@@ -32,6 +32,14 @@ export type MarketplacePage = {
   total: number
   limit: number
   offset: number
+  locations: LocationOption[]
+}
+
+export type LocationOption = {
+  locationId: string
+  label: string
+  locationType?: string
+  meetingModes: string[]
 }
 
 export type BookingDraft = {
@@ -47,11 +55,15 @@ export type PriceQuote = {
   currency: string
   expiresAt: number | string
   workerId: string
+  actionToken?: string
+  actionTokenExpiresAt?: number
 }
 
 export type BookingConfirmation = {
   bookingId: string
   status: "RESERVED"
+  actionToken?: string
+  actionTokenExpiresAt?: number
 }
 
 export type ClientModeBookingReference = {
@@ -104,9 +116,11 @@ export type ClientModeSpawn = {
   model?: string
   appearanceProfileRef?: string
   candidate?: { kind: "coords"; x: number; y: number; z: number; heading?: number } | { kind: "provider"; provider: string }
+  target?: { kind: "coords"; x: number; y: number; z: number; heading?: number } | { kind: "provider"; provider: string }
   entity?: number
   networkId?: number
   serverOwned?: boolean
+  actionToken?: string
 }
 
 export type ClientModeSession = {
@@ -120,6 +134,8 @@ export type ClientModeSession = {
 export type ClientModeConfirmation = {
   bookingId: string
   status?: ClientBookingStatus
+  actionToken?: string
+  actionTokenExpiresAt?: number
   booking?: ClientModeBookingReference
   worker?: ClientModeWorkerReference
   location?: ClientModeLocationReference
@@ -132,6 +148,8 @@ export type ClientModeTravelResponse = {
   travel?: ClientModeTravel
   bookingId?: string
   travelKey?: string
+  actionToken?: string
+  actionTokenExpiresAt?: number
 }
 
 export type ClientModeSpawnResponse = ClientModeTravelResponse & {
@@ -151,6 +169,8 @@ export type ClientModeSessionResponse = {
   session?: ClientModeSession
   token?: string
   settlement?: { status?: string; booking?: ClientModeBookingReference }
+  actionToken?: string
+  actionTokenExpiresAt?: number
 }
 
 export type ClientModeProgressResponse = ClientModeTravelResponse
@@ -198,10 +218,11 @@ export type ClientBookingPage = {
 export type NUIRequestMap = {
   "marketplace:list": MarketplaceFilters
   "booking:quote": BookingDraft
-  "booking:confirm": { quoteId: string }
+  "booking:confirm": { quoteId: string; actionToken?: string }
+  "security:action-token": { bookingId: string; action: string; generation?: string; generationToken?: string; generation_token?: string; profileKey?: string; travelKey?: string }
   "client-mode:confirm": { quoteId: string }
-  "client-mode:travel": { bookingId: string }
-  "client-mode:spawn": { bookingId: string }
+  "client-mode:travel": { bookingId: string; actionToken?: string }
+  "client-mode:spawn": { bookingId: string; actionToken?: string }
   "client-mode:spawn-confirm": ClientModeSpawn
   "client-mode:arrival": {
     bookingId?: string
@@ -211,11 +232,12 @@ export type NUIRequestMap = {
     entity?: number
     networkId?: number
     position?: { x: number; y: number; z: number }
+    actionToken?: string
   }
-  "client-mode:session-start": { bookingId: string; locationType?: string; locationRef?: string; meetingMode?: string }
-  "client-mode:session-complete": { bookingId?: string; token: string; locationType?: string; locationRef?: string; meetingMode?: string }
+  "client-mode:session-start": { bookingId: string; locationType?: string; locationRef?: string; meetingMode?: string; actionToken?: string }
+  "client-mode:session-complete": { bookingId?: string; token: string; locationType?: string; locationRef?: string; meetingMode?: string; actionToken?: string }
   "client-mode:travel-progress": { bookingId: string }
-  "client-mode:recover": { bookingId: string; recoveryState: "NONE" | "STUCK" | "PLAYER_AWAY" | "ENTITY_DELETED" | "TIMEOUT" | "RETURNING" }
+  "client-mode:recover": { bookingId: string; recoveryState: "NONE" | "STUCK" | "PLAYER_AWAY" | "ENTITY_DELETED" | "TIMEOUT" | "RETURNING"; actionToken?: string }
   "client-bookings:list": { offset?: number; limit?: number }
   "ui:close": Record<string, never>
 }
@@ -224,6 +246,7 @@ export type NUIResponseMap = {
   "marketplace:list": MarketplacePage
   "booking:quote": PriceQuote
   "booking:confirm": BookingConfirmation
+  "security:action-token": { token?: string; bookingId?: string; action?: string; expiresAt?: number; bypassed?: boolean }
   "client-mode:confirm": ClientModeConfirmation
   "client-mode:travel": ClientModeTravelResponse
   "client-mode:spawn": ClientModeSpawnResponse

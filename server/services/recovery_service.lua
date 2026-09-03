@@ -79,6 +79,12 @@ local function sourceValue(value)
     return integer(value, 1, 65535)
 end
 
+local function playerSourceFromReference(value)
+    if type(value) ~= 'string' then return nil end
+    local source = value:match('^player:(%d+)$')
+    return sourceValue(source)
+end
+
 local function normalizeId(value)
     if type(value) == 'table' then value = value.id end
     if integer(value, 1) then return tostring(math.floor(tonumber(value))) end
@@ -94,7 +100,7 @@ end
 local function notFound(result)
     local code = errorValue(result).code
     return code == Codes.REPOSITORY_NOT_FOUND or code == Codes.BOOKING_NOT_FOUND
-        or code == Codes.NPC_WORKER_NOT_FOUND
+        or code == Codes.NPC_WORKER_NOT_FOUND or code == Codes.DEPOSIT_NOT_FOUND
 end
 
 local function items(value)
@@ -113,6 +119,11 @@ function Service.new(options)
     end
     local configured = options.config or NightShift.RecoveryConfig or {}
     if type(configured) ~= 'table' then return nil, invalid('recovery configuration must be a table') end
+    local environment = type(options.environment) == 'string' and options.environment:lower() or nil
+    local production = environment == 'production' or environment == 'prod'
+    -- Production remains fail-closed unless apply=true is explicitly present
+    -- in the supplied recovery configuration. This also protects callers
+    -- that construct the service outside StartupRecoveryJob.
     local defaults = NightShift.RecoveryConfig or {}
     local function flag(name, fallback)
         local value = configured[name]
@@ -133,6 +144,14 @@ function Service.new(options)
     if enabled == nil or required == nil or apply == nil or not pageSize or not maxPages or not grace then
         return nil, invalid('recovery configuration contains an invalid setting')
     end
+    if production and enabled ~= true then
+        return nil, Result.err(Codes.RECOVERY_REQUIRED,
+            'production recovery cannot be disabled before READY')
+    end
+    if production and apply ~= true then
+        return nil, Result.err(Codes.RECOVERY_REQUIRED,
+            'production recovery requires recovery.apply=true before service construction')
+    end
     local systemActor = copy(options.systemActor or { type = 'SYSTEM', ref = 'nightshift:recovery' })
     if type(systemActor) ~= 'table' or not text(systemActor.ref, 200) then return nil, invalid('recovery system actor is invalid') end
     systemActor.type = type(systemActor.type) == 'string' and systemActor.type:upper() or 'SYSTEM'
@@ -143,15 +162,20 @@ function Service.new(options)
         _locationReservation = options.locationReservationService or options.locationReservation,
         _locationRepository = options.locationReservationRepository,
         _npcProfileRepository = options.npcProfileRepository or options.npcProfilesRepository,
+        _npcWorker = options.npcWorkerService or options.npcWorker,
         _workerAvailability = options.workerAvailabilityService or options.workerAvailability,
         _clientMode = options.clientModeService or options.clientMode,
         _workerMode = options.workerModeService or options.workerMode,
         _travel = options.npcTravelService or options.npcTravel,
         _entityRegistry = options.npcEntityRegistry or options.npcEntityService,
+        _deposit = options.depositService or options.deposit,
+        _refund = options.refundService or options.refund,
         _settlement = options.settlementService or options.settlement,
         _eventBus = options.eventBus, _audit = options.auditService or options.audit,
         _actorResolver = options.actorResolver or options.recoveryActorResolver,
+        _settlementRecoveryResolver = options.settlementRecoveryResolver or options.recoverySettlementResolver,
         _clock = options.clock or (NightShift.Clock and NightShift.Clock.new and NightShift.Clock.new() or nil),
+        _environment = production and 'production' or environment or 'development',
         _systemActor = systemActor,
         _config = {
             enabled = enabled, required = required, apply = apply, pageSize = pageSize, maxPages = maxPages,
@@ -215,9 +239,154 @@ function Service:_publish(booking, summary, classification)
         pcall(self._audit.record, self._audit, {
             actor = { actorType = 'SYSTEM', ref = self._systemActor.ref }, action = 'booking.recovery_reconcile',
             target = { type = 'BOOKING', ref = tostring(booking.id) }, result = Result.ok({ category = classification.category }),
-            reason = 'recovery-observation', metadata = { category = classification.category, pending = summary.pending == true }
+            reason = summary.recovered == true and 'recovery-apply' or 'recovery-observation',
+            metadata = { category = classification.category, pending = summary.pending == true }
         })
     end
+end
+
+function Service:_actorForBooking(booking)
+    if type(self._actorResolver) == 'function' then
+        local ok, actor = pcall(self._actorResolver, copy(booking), copy(self._systemActor))
+        if ok and type(actor) == 'table' and sourceValue(actor.source or actor.playerSource) then
+            return copy(actor)
+        end
+    end
+    local source = playerSourceFromReference(booking.clientRef or booking.client_ref)
+    if source then
+        return { type = 'PLAYER', ref = tostring(booking.clientRef or booking.client_ref), source = source }
+    end
+    return nil
+end
+
+function Service:_cleanupBooking(booking, summary)
+    summary.cleanup = summary.cleanup or { released = {}, failed = {}, pending = false }
+    local cleanup = summary.cleanup
+    local function failure(name, result, fallback)
+        local errorResult = type(result) == 'table' and (result.error or result) or {}
+        cleanup.failed[#cleanup.failed + 1] = {
+            dependency = name,
+            code = errorResult.code or fallback or Codes.RECOVERY_OPERATION_FAILED,
+            message = errorResult.message or 'recovery cleanup failed'
+        }
+        cleanup.pending = true
+        summary.failed, summary.pending = true, true
+    end
+    local function call(name, dependency, method, ...)
+        if type(dependency) ~= 'table' or type(dependency[method]) ~= 'function' then
+            if self._environment == 'production' then
+                failure(name, nil, Codes.RECOVERY_NOT_READY)
+                return false
+            end
+            return true
+        end
+        local ok, result = pcall(dependency[method], dependency, ...)
+        if not ok or type(result) ~= 'table' or result.ok ~= true then
+            -- A missing lock/profile is already reconciled state. Treat it as
+            -- an idempotent cleanup result; all other dependency failures stay
+            -- pending so production readiness cannot hide a stale resource.
+            if ok and notFound(result) then
+                cleanup.released[#cleanup.released + 1] = name
+                return true
+            end
+            failure(name, ok and result or nil)
+            return false
+        end
+        cleanup.released[#cleanup.released + 1] = name
+        return true
+    end
+
+    local bookingId = booking.id
+    if self._config.releaseReservations == true then
+        call('bookingReservation', self._bookingReservation, 'releaseBooking', bookingId)
+        local hasLocationReservation = booking.locationRef ~= nil or booking.location_ref ~= nil
+            or booking.locationType ~= nil or booking.location_type ~= nil
+        if hasLocationReservation and type(self._locationReservation) == 'table'
+            and type(self._locationReservation.recoverBooking) == 'function' then
+            local ok, result = pcall(self._locationReservation.recoverBooking, self._locationReservation, bookingId, { status = 'RELEASED' })
+            if not ok or type(result) ~= 'table' or result.ok ~= true then
+                failure('locationReservation', result)
+            elseif type(result.value) == 'table' and (tonumber(result.value.failed or 0) > 0
+                or tonumber(result.value.providerDeferred or 0) > 0) then
+                failure('locationReservation', result, Codes.RESERVATION_PROVIDER_FAILED)
+            else
+                cleanup.released[#cleanup.released + 1] = 'locationReservation'
+            end
+        elseif hasLocationReservation and self._environment == 'production' then
+            failure('locationReservation', nil, Codes.RECOVERY_NOT_READY)
+        end
+    end
+
+    local workerType = tostring(booking.workerType or booking.worker_type or ''):upper()
+    local workerRef = booking.workerRef or booking.worker_ref
+    if workerType == 'NPC' and type(workerRef) == 'string' then
+        call('npcWorker', self._npcWorker, 'release', workerRef, bookingId)
+    elseif workerType == 'PLAYER' then
+        local workerSource = playerSourceFromReference(workerRef)
+        if workerSource and type(self._workerAvailability) == 'table' and type(self._workerAvailability.releaseBooking) == 'function' then
+            call('workerAvailability', self._workerAvailability, 'releaseBooking', workerSource, bookingId, { returnAvailable = true })
+        end
+    end
+
+    local profileKey = booking.profileKey or booking.profile_key
+    local generation = booking.generationToken or booking.generation_token
+    if profileKey and generation and type(self._entityRegistry) == 'table' and type(self._entityRegistry.markDeleted) == 'function' then
+        call('entityRegistry', self._entityRegistry, 'markDeleted', profileKey, generation)
+    end
+    local travelKey = booking.travelKey or booking.travel_key
+    if travelKey and type(self._travel) == 'table' and type(self._travel.markRecovery) == 'function' then
+        call('travel', self._travel, 'markRecovery', travelKey, 'BOOKING_INTERRUPTED')
+    end
+
+    if self._config.releaseHeldDeposits == true and type(self._deposit) == 'table' and type(self._deposit.release) == 'function' then
+        local actor = self:_actorForBooking(booking)
+        if actor then
+            call('deposit', self._deposit, 'release', actor, copy(booking))
+        elseif booking.depositStatus == 'HELD' or type(booking.deposit) == 'table' then
+            failure('deposit', nil, Codes.DEPOSIT_INVALID)
+        end
+    end
+    return not cleanup.pending
+end
+
+function Service:_settlementContext(booking)
+    if type(self._settlementRecoveryResolver) ~= 'function' then
+        return nil, { code = Codes.SETTLEMENT_NOT_READY,
+            message = 'completed booking settlement requires an explicit recovery resolver' }
+    end
+    local ok, resolved = pcall(self._settlementRecoveryResolver, copy(booking), copy(self._systemActor))
+    if not ok then
+        return nil, { code = Codes.SETTLEMENT_NOT_READY,
+            message = 'recovery settlement resolver failed' }
+    end
+    if type(resolved) == 'table' and resolved.ok == false then
+        return nil, errorValue(resolved, Codes.SETTLEMENT_NOT_READY,
+            'recovery settlement resolver rejected the booking')
+    end
+    if type(resolved) == 'table' and resolved.ok == true then resolved = resolved.value end
+    if type(resolved) ~= 'table' or resolved.approved ~= true then
+        return nil, { code = Codes.SETTLEMENT_NOT_READY,
+            message = 'recovery settlement requires explicit approval' }
+    end
+    local actor = type(resolved.actor) == 'table' and copy(resolved.actor) or nil
+    local request = type(resolved.request) == 'table' and resolved.request or nil
+    if not actor or not text(actor.ref, 200) or not request then
+        return nil, { code = Codes.SETTLEMENT_NOT_READY,
+            message = 'recovery settlement actor context is invalid' }
+    end
+    local payer = sourceValue(request.payerSource)
+    local payee = sourceValue(request.payeeSource)
+    local actorSource = sourceValue(actor.source or actor.playerSource)
+    if not payer or not payee or payer == payee or not actorSource or actorSource ~= payer then
+        return nil, { code = Codes.SETTLEMENT_NOT_READY,
+            message = 'recovery settlement requires distinct actor-bound payer and payee sources' }
+    end
+    actor.type = type(actor.type) == 'string' and actor.type:upper() or 'PLAYER'
+    actor.source = payer
+    local safeRequest = { payerSource = payer, payeeSource = payee }
+    if request.commissionSnapshot ~= nil then safeRequest.commissionSnapshot = copy(request.commissionSnapshot) end
+    if request.commissionSplit ~= nil then safeRequest.commissionSplit = copy(request.commissionSplit) end
+    return actor, safeRequest
 end
 
 function Service:reconcileBooking(value, options)
@@ -238,8 +407,8 @@ function Service:reconcileBooking(value, options)
         summary.pending = not summary.preserved
         return Result.ok(summary, { dryRun = true })
     end
-    -- Applying recovery is an explicit, separately reviewable operation.  The
-    -- default startup path never reaches this branch.
+    -- Applying recovery is explicit in development. Production startup reaches
+    -- this branch only after the configured apply policy has been validated.
     if self._config.apply ~= true or options.apply ~= true then
         return Result.err(Codes.RECOVERY_REQUIRED, 'recovery apply mode is disabled; explicit activation is required')
     end
@@ -251,9 +420,34 @@ function Service:reconcileBooking(value, options)
     if summary.action == 'RETRY_SETTLEMENT' then
         if type(self._settlement) ~= 'table' or type(self._settlement.settle) ~= 'function' then
             summary.pending, summary.settlementPending = true, true
+            summary.settlementError = { code = Codes.SETTLEMENT_NOT_READY, message = 'settlement service is unavailable' }
             return Result.ok(summary, { pending = true })
         end
+        local actor, settlementRequest = self:_settlementContext(booking)
+        if not actor then
+            summary.pending, summary.settlementPending = true, true
+            summary.settlementError = settlementRequest or {
+                code = Codes.SETTLEMENT_NOT_READY,
+                message = 'completed booking settlement context is unavailable'
+            }
+            return Result.ok(summary, { pending = true, settlementRequiresExplicitActor = true })
+        end
+        local settledOk, settled = pcall(self._settlement.settle, self._settlement,
+            actor, copy(booking), settlementRequest)
+        local value = settledOk and type(settled) == 'table' and settled.ok == true and settled.value or nil
+        local settledBooking = type(value) == 'table' and type(value.booking) == 'table' and value.booking or nil
+        local settledStatus = type(value) == 'table' and (value.status or settledBooking and settledBooking.status) or nil
+        local bookingSettled = settledBooking and tostring(settledBooking.status or ''):upper() == 'SETTLED'
+        if settledOk and type(settled) == 'table' and settled.ok == true
+            and tostring(settledStatus or ''):upper() == 'SETTLED' and bookingSettled then
+            summary.recovered, summary.settled, summary.settlementPending = true, true, false
+            summary.pending, summary.settlement = false, { status = 'SETTLED' }
+            self:_publish(settledBooking, summary, classified.value)
+            return Result.ok(summary, { settlementReconciled = true })
+        end
         summary.pending, summary.settlementPending = true, true
+        summary.settlementError = errorValue(settled, Codes.SETTLEMENT_NOT_READY,
+            'recovery settlement did not return a SETTLED booking')
         return Result.ok(summary, { pending = true, settlementRequiresExplicitActor = true })
     end
     if type(self._booking) ~= 'table' or type(self._booking.interrupt) ~= 'function' then
@@ -264,7 +458,10 @@ function Service:reconcileBooking(value, options)
         if type(interrupted) == 'table' and interrupted.error and interrupted.error.code == Codes.VERSION_CONFLICT and type(self._repository.findById) == 'function' then
             local latest = self._repository:findById(booking.id)
             if type(latest) == 'table' and latest.ok and latest.value and latest.value.status == 'INTERRUPTED' then
-                summary.recovered, summary.idempotent = true, true
+                local cleanupOk = self:_cleanupBooking(latest.value, summary)
+                summary.recovered, summary.idempotent = cleanupOk, true
+                summary.interrupted, summary.cleanupPending = true, not cleanupOk
+                self:_publish(latest.value, summary, classified.value)
                 return Result.ok(summary, { idempotent = true })
             end
         end
@@ -272,8 +469,9 @@ function Service:reconcileBooking(value, options)
         summary.failed, summary.error = true, errorResult
         return Result.ok(summary, { failed = true })
     end
-    summary.recovered = true
     summary.interrupted = true
+    local cleanupOk = self:_cleanupBooking(interrupted.value or booking, summary)
+    summary.recovered, summary.cleanupPending = cleanupOk, not cleanupOk
     self:_publish(interrupted.value or booking, summary, classified.value)
     return Result.ok(summary)
 end
@@ -303,7 +501,9 @@ function Service:runOnce(suppliedNow, options)
             summary.pages = page
             for _, booking in ipairs(list) do
                 summary.scanned = summary.scanned + 1
-                local reconciled = self:reconcileBooking(booking, { now = now, dryRun = options.apply ~= true })
+                local reconciled = self:reconcileBooking(booking, {
+                    now = now, apply = options.apply == true, dryRun = options.apply ~= true
+                })
                 if type(reconciled) == 'table' and reconciled.ok then
                     local value = reconciled.value or {}
                     local category = value.category or 'OTHER'
@@ -340,7 +540,8 @@ function Service:lastRun()
 end
 
 function Service:status()
-    return Result.ok({ enabled = self._config.enabled, apply = self._config.apply, running = self._running, lastRun = copy(self._lastRun) })
+    return Result.ok({ enabled = self._config.enabled, apply = self._config.apply, environment = self._environment,
+        running = self._running, lastRun = copy(self._lastRun) })
 end
 
 function Service:disconnect(playerSource, reason)

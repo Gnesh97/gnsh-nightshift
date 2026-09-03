@@ -1,8 +1,8 @@
 NightShift = NightShift or {}
 
--- Security defaults are intentionally conservative but backwards compatible:
--- rate limiting is on for network requests, while action-token enforcement is
--- opt-in until every external caller has been migrated to the token contract.
+-- Security defaults are intentionally conservative: rate limiting and
+-- action-token enforcement are on. Development may opt out explicitly while
+-- external callers are migrated; production always remains fail-closed.
 NightShift.SecurityConfig = NightShift.SecurityConfig or {
     enabled = true,
     persistentCounters = false,
@@ -25,7 +25,8 @@ NightShift.SecurityConfig = NightShift.SecurityConfig or {
     },
     actionTokens = {
         enabled = true,
-        enforce = false,
+        enforce = true,
+        developmentOptOut = true,
         ttlSeconds = 90,
         maxActive = 4096,
         maxTokenLength = 192

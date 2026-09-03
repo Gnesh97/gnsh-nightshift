@@ -74,6 +74,8 @@ const fail = <T>(requestId: string, code: string, message: string): ApiResult<T>
 
 const isEmbedded = () => typeof window.GetParentResourceName === "function"
 
+const mockEnabled = () => import.meta.env.DEV && import.meta.env.VITE_NIGHTSHIFT_MOCK === "true"
+
 async function mockRequest<K extends keyof NUIRequestMap>(
   method: K,
   payload: NUIRequestMap[K],
@@ -88,7 +90,10 @@ async function mockRequest<K extends keyof NUIRequestMap>(
       const classMatches = !filters.priceClass || worker.priceClass === filters.priceClass
       return districtMatches && classMatches
     })
-    return ok(requestId, { items, total: items.length, limit: 12, offset: 0 } as MarketplacePage as NUIResponseMap[K])
+    return ok(requestId, { items, total: items.length, limit: 12, offset: 0, locations: [
+      { locationId: "mock:come-to-me", label: "Vinewood buluşma noktası", locationType: "CONFIG_LOCATION", meetingModes: ["COME_TO_ME", "MEET_THERE"] },
+      { locationId: "mock:pickup", label: "Vinewood yol kenarı", locationType: "SAFE_ROADSIDE", meetingModes: ["PICKUP"] },
+    ] } as MarketplacePage as NUIResponseMap[K])
   }
 
   if (method === "booking:quote") {
@@ -103,13 +108,14 @@ async function mockRequest<K extends keyof NUIRequestMap>(
       currency: "$",
       expiresAt: Date.now() + 60_000,
       workerId: worker.workerId,
+      actionToken: `mock-action:confirm:${Date.now()}`,
     } as PriceQuote as NUIResponseMap[K])
   }
 
   if (method === "booking:confirm") {
     const quote = payload as NUIRequestMap["booking:confirm"]
     if (!quote.quoteId) return fail(requestId, "QUOTE_INVALID", "Teklifi yenileyip tekrar dene.")
-    return ok(requestId, { bookingId: `mock-${Date.now()}`, status: "RESERVED" } as BookingConfirmation as NUIResponseMap[K])
+    return ok(requestId, { bookingId: `mock-${Date.now()}`, status: "RESERVED", actionToken: `mock-action:travel:${Date.now()}` } as BookingConfirmation as NUIResponseMap[K])
   }
 
   if (method === "client-mode:confirm") {
@@ -118,9 +124,10 @@ async function mockRequest<K extends keyof NUIRequestMap>(
       status: "RESERVED",
       booking: { bookingId: "mock-booking:1", status: "RESERVED" },
       worker: { workerKey: "npc:vin:001", profileKey: "npc-profile:vin:001", state: "RESERVED", bookingId: "mock-booking:1" },
-      location: { locationType: "CONFIG_LOCATION", locationRef: "configured_default", meetingMode: "COME_TO_ME" },
-      reservation: { reservationKey: "location:configured_default:mock-booking:1", status: "RESERVED" },
+      location: { locationType: "CONFIG_LOCATION", locationRef: "mock:come-to-me", meetingMode: "COME_TO_ME" },
+      reservation: { reservationKey: "location:mock:come-to-me:mock-booking:1", status: "RESERVED" },
       deposit: { status: "HELD", amountMinor: 710, currency: "USD" },
+      actionToken: `mock-action:travel:${Date.now()}`,
     } as ClientModeConfirmation as NUIResponseMap[K])
   }
 
@@ -131,6 +138,7 @@ async function mockRequest<K extends keyof NUIRequestMap>(
       travelKey: `client-travel:${bookingId}:npc:vin:001`,
       booking: { bookingId, status: "TRAVELLING" },
       travel: { travelKey: `client-travel:${bookingId}:npc:vin:001`, bookingId, profileKey: "npc-profile:vin:001", mode: "WALK", state: "TRAVELLING", progress: 0.7, etaSeconds: 60, startedAt: Date.now() },
+      actionToken: `mock-action:spawn:${Date.now()}`,
     } as ClientModeTravelResponse as NUIResponseMap[K])
   }
 
@@ -150,7 +158,7 @@ async function mockRequest<K extends keyof NUIRequestMap>(
       networkId: spawnPayload.networkId || 88,
       serverOwned: true,
     }
-    return ok(requestId, { bookingId, travelKey, profileKey: spawn.profileKey, generationToken: spawn.generationToken, entity: spawn.entity, networkId: spawn.networkId, spawn } as ClientModeSpawnResponse as NUIResponseMap[K])
+    return ok(requestId, { bookingId, travelKey, profileKey: spawn.profileKey, generationToken: spawn.generationToken, entity: spawn.entity, networkId: spawn.networkId, spawn, actionToken: `mock-action:${method === "client-mode:spawn" ? "spawn-confirm" : "arrival"}:${Date.now()}` } as ClientModeSpawnResponse as NUIResponseMap[K])
   }
 
   if (method === "client-mode:arrival") {
@@ -163,13 +171,14 @@ async function mockRequest<K extends keyof NUIRequestMap>(
       booking: { bookingId, status: "ARRIVED" },
       travel: { travelKey, bookingId, profileKey: "npc-profile:vin:001", mode: "WALK", state: "ARRIVED", progress: 1 },
       arrival: { travelKey, bookingId, profileKey: "npc-profile:vin:001", mode: "WALK", state: "ARRIVED", progress: 1 },
+      actionToken: `mock-action:session-start:${Date.now()}`,
     } as ClientModeArrivalResponse as NUIResponseMap[K])
   }
 
   if (method === "client-mode:session-start") {
     const bookingId = (payload as { bookingId: string }).bookingId || "mock-booking:1"
     const mockSessionToken = "appointment:mock:1"
-    return ok(requestId, { booking: { bookingId, status: "ACTIVE" }, session: { bookingId, token: mockSessionToken, state: "ACTIVE", startedAt: Date.now(), expiresAt: Date.now() + 900_000 }, token: mockSessionToken } as ClientModeSessionResponse as NUIResponseMap[K])
+    return ok(requestId, { booking: { bookingId, status: "ACTIVE" }, session: { bookingId, token: mockSessionToken, state: "ACTIVE", startedAt: Date.now(), expiresAt: Date.now() + 900_000 }, token: mockSessionToken, actionToken: `mock-action:session-complete:${Date.now()}` } as ClientModeSessionResponse as NUIResponseMap[K])
   }
 
   if (method === "client-mode:session-complete") {
@@ -190,7 +199,10 @@ export async function nuiRequest<K extends keyof NUIRequestMap>(
   payload: NUIRequestMap[K],
 ): Promise<ApiResult<NUIResponseMap[K]>> {
   const requestId = newRequestId()
-  if (!isEmbedded()) return mockRequest(method, payload, requestId)
+  if (!isEmbedded()) {
+    if (mockEnabled()) return mockRequest(method, payload, requestId)
+    return fail(requestId, "NUI_UNAVAILABLE", "FiveM sunucu köprüsü bulunamadı. Development mock açık değil.")
+  }
 
   try {
     const resourceName = window.GetParentResourceName?.()

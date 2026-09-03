@@ -4,6 +4,45 @@ All notable changes to NightShift are documented here.
 
 ## [Unreleased]
 
+### Remediation — runtime readiness, recovery & release gates
+
+- **REM-001–REM-004:** Closed incomplete-bootstrap `READY` paths, added
+  runtime convar selection, idempotent NPC pool preparation, an allowlisted
+  client NPC coordinator, and the server-backed marketplace/booking flow.
+- **REM-005–REM-006:** Production startup recovery now requires the apply
+  policy before `READY`; applied recovery releases booking, location, worker,
+  entity/travel, and held-deposit resources where their authoritative owners
+  are available. Disconnect and resource-stop paths use the same cleanup seam;
+  partial cleanup remains explicitly pending instead of claiming recovery.
+  Completed bookings stay blocked until a provider-backed, actor-bound
+  settlement reconciliation is available; no stale row is treated as settled.
+  Custom production configs without a recovery table now receive the same
+  apply-mode default, while an explicit recovery convar can still fail closed.
+- **REM-007–REM-008:** Critical NUI transitions consume actor/booking/action
+  tokens, including numeric database booking IDs; read projections remain
+  participant-scoped and location options are bounded and coordinate-free.
+  Lifecycle failures now refresh the consumed one-time token before a retry.
+  Generation-bound refreshes require the server NPC registry to verify the
+  booking, travel, profile, and generation context; the browser cannot mint an
+  arbitrary entity generation.
+  Refresh requests normalize the legacy `generation` and lifecycle
+  `generationToken` names before the same registry check.
+  The NUI callback contracts also cover one-time token consumption and safe
+  refresh after a transient service error.
+- Completed-booking recovery now supports an explicit, actor-bound settlement
+  resolver (`approved=true` plus distinct payer/payee sources) while retaining
+  a pending, no-money-effect default when that provider seam is absent.
+- **REM-010:** Added deterministic locale parity and secret-scan gates,
+  fail-closed Lua/NUI checks, and a remediation evidence status document.
+  Measured coverage and all live FXServer/provider/OneSync evidence remain
+  explicit operator gates until their artifacts are captured.
+- Production recovery cannot be disabled or skipped before `READY`, and the
+  coverage gate accepts both pipe-delimited and whitespace-column LuaCov rows
+  without falling back to an unmeasured summary.
+- Remediation evidence matrices now distinguish automated contract results from
+  live runtime evidence; unsupported framework/S28 release PASS placeholders
+  are marked BLOCKED until an operator records versions, logs, and cleanup.
+
 ### S30 — Release Candidate, CI, Documentation & Packaging
 
 - **NS-300:** Added the root installation guide and the framework, provider,
@@ -12,7 +51,8 @@ All notable changes to NightShift are documented here.
   resource startup order; development smoke commands remain opt-in.
 - **NS-301:** Added a GitHub Actions quality gate for Lua contracts/syntax,
   NUI lint and TypeScript/Vite build, release-builder tests, migration order,
-  locale fallback validation, and an optional Gitleaks scan.
+  locale fallback validation, and a mandatory deterministic secret scan
+  (Gitleaks remains supplementary when installed).
 - **NS-302:** Added a source-preserving release builder that builds the NUI in
   staging, omits tests/dev/cache/dependency/credential/CI metadata, writes a
   SHA-256 manifest, normalizes archive metadata for reproducible ZIP output,
@@ -56,8 +96,9 @@ All notable changes to NightShift are documented here.
 - **NS-260–NS-263:** Added bounded, policy-driven recovery for reserved,
   arrived, scheduled, disconnected, and entity-loss bookings, with dry-run
   defaults, idempotent cleanup, and a lifecycle-managed startup recovery job.
-- Recovery is observation-only by default and never claims settlement or
-  releases resources without an explicit server-side policy decision.
+- Development recovery remains observation-only by default; production startup
+  requires an explicit apply policy and blocks `READY` until unresolved work is
+  absent. Resource release is idempotent and server-side only.
 
 ### S25 — Public API, DTOs, Idempotency & Events
 

@@ -1,6 +1,9 @@
 NightShift = NightShift or {}
 
 local readiness = NightShift.Enums.Readiness
+-- DEGRADED is intentionally declared at the bootstrap boundary so older
+-- shared enum files remain load-compatible with the runtime readiness contract.
+readiness.DEGRADED = readiness.DEGRADED or 'DEGRADED'
 
 local function copyValue(value, seen)
     if NightShift.Validators and type(NightShift.Validators.copy) == 'function' then
@@ -27,18 +30,83 @@ local function persistenceConvarEnabled()
     return value == 'true' or value == '1'
 end
 
+local function optionalConvar(name)
+    local value = tostring(readConvar(name, ''))
+    if value == '' then return nil end
+    -- String selectors (environment/provider/framework/money) must not
+    -- interpret boolean fallbacks returned by permissive test doubles or
+    -- missing convars as real selector values.
+    local normalized = value:lower()
+    if normalized == 'true' or normalized == 'false' or normalized == '1'
+        or normalized == '0' or normalized == 'yes' or normalized == 'no' then
+        return nil
+    end
+    return value
+end
+
+local function booleanConvar(name)
+    local value = tostring(readConvar(name, ''))
+    if value == '' then return nil end
+    value = value:lower()
+    if value == 'true' or value == '1' or value == 'yes' then return true end
+    if value == 'false' or value == '0' or value == 'no' then return false end
+    return nil
+end
+
 local function applyRuntimeConfig(source)
-    if type(source) ~= 'table' or not persistenceConvarEnabled() then return source end
+    if type(source) ~= 'table' then return source end
     local output = copyValue(source)
+    local changed = false
     if rawget(output, 'features') == nil then
         output.features = {}
+        changed = true
     elseif type(output.features) ~= 'table' then
         return output
     else
         output.features = copyValue(output.features)
     end
-    output.features.persistence = true
-    return output
+    local environment = optionalConvar('nightshift_environment')
+    if environment ~= nil then output.environment = environment:lower(); changed = true end
+    local provider = optionalConvar('nightshift_provider')
+    if provider ~= nil then output.provider = { mode = 'explicit', name = provider }; changed = true end
+    local framework = optionalConvar('nightshift_framework')
+    if framework ~= nil then output.framework = framework; changed = true end
+    local moneyProvider = optionalConvar('nightshift_money_provider')
+    if moneyProvider ~= nil then output.moneyProvider = moneyProvider; changed = true end
+    local persistence = booleanConvar('nightshift_persistence')
+    if persistence ~= nil then output.features.persistence = persistence; changed = true end
+    if persistenceConvarEnabled() then output.features.persistence = true; changed = true end
+    for _, featureName in ipairs({ 'payments', 'developmentSettlement', 'physicalNpc', 'deposits' }) do
+        local configured = booleanConvar('nightshift_' .. featureName)
+        if configured ~= nil then output.features[featureName] = configured; changed = true end
+    end
+    if output.environment == 'production' or output.environment == 'prod' then
+        if output.features.developmentSettlement ~= false then
+            output.features.developmentSettlement = false
+            changed = true
+        end
+    end
+    local recoveryApply = booleanConvar('nightshift_recovery_apply')
+    local productionEnvironment = output.environment == 'production' or output.environment == 'prod'
+    if output.recovery == nil and productionEnvironment then
+        -- A custom production config may omit the recovery table entirely.
+        -- Materialize the canonical policy so startup recovery is apply-mode
+        -- by default; an explicit convar can still turn it off and fail
+        -- readiness instead of silently falling back to dry-run.
+        output.recovery = copyValue(NightShift.RecoveryConfig or {})
+        changed = true
+    end
+    if type(output.recovery) == 'table' then
+        output.recovery = copyValue(output.recovery)
+        if recoveryApply ~= nil then
+            output.recovery.apply = recoveryApply
+            changed = true
+        elseif productionEnvironment then
+            output.recovery.apply = true
+            changed = true
+        end
+    end
+    return changed and output or source
 end
 
 local function oxMySqlAvailable()
@@ -458,7 +526,8 @@ local defaultStages = {
         end
         if actionTokens == nil and features.security ~= false and NightShift.ActionTokenStore then
             local created, err = NightShift.ActionTokenStore.new({
-                config = securityConfig, clock = options.clock, audit = auditService
+                config = securityConfig, environment = config.environment,
+                clock = options.clock, audit = auditService
             })
             if not created then
                 if securityConfig.enabled == true then return err end
@@ -858,6 +927,29 @@ local defaultStages = {
             if not created then return err end
             npcWorker = created
         end
+        local npcPool
+        -- A logical worker pool is only materialized when physical NPC mode is
+        -- enabled.  Standalone/contract boots may still expose the worker
+        -- service without requiring a database-backed ped pool.
+        if npcWorker and type(npcWorker.ensurePool) == 'function'
+            and features.physicalNpc == true
+            and (config.npcProfileConfig == nil or config.npcProfileConfig.enabled ~= false) then
+            local npcConfig = config.npcProfileConfig or NightShift.NpcProfileConfig or {}
+            local poolConfig = type(npcConfig.workerPool) == 'table' and npcConfig.workerPool or {}
+            local ensured, ensureError = npcWorker:ensurePool({
+                targetSize = options.npcPoolTargetSize or poolConfig.targetSize,
+                seed = options.npcPoolSeed or 'bootstrap'
+            })
+            if type(ensured) ~= 'table' or ensured.ok ~= true then
+                local environment = tostring(config.environment or 'development'):lower()
+                local strict = environment == 'production' or environment == 'prod'
+                    or (type(config.features) == 'table' and config.features.persistence == true)
+                    or options.requireNpcPool == true
+                if strict then return ensureError or ensured end
+            else
+                npcPool = ensured.value
+            end
+        end
         local marketplace = options.marketplaceQueryService or options.marketplaceService
         if marketplace == nil and NightShift.MarketplaceQueryService and npcWorker then
             local npcConfig = config.npcProfileConfig or NightShift.NpcProfileConfig or {}
@@ -978,7 +1070,7 @@ local defaultStages = {
                 motelProviders = motelRegistry, housingProviders = housingRegistry,
                 locationProviderApi = locationProviderApi,
                 pickupLocation = pickupLocation, pickupVehicle = pickupVehicle, pickupMode = pickupMode, dualTravel = dualTravel,
-                npcProfileGenerator = npcProfileGenerator, npcWorker = npcWorker, marketplace = marketplace,
+                npcProfileGenerator = npcProfileGenerator, npcWorker = npcWorker, npcPool = npcPool, marketplace = marketplace,
                 npcTravel = npcTravel, npcEntityRegistry = npcEntityRegistry, npcSpawn = npcSpawn, npcArrival = npcArrival,
                 npcStreamingBudget = npcStreamingBudget, entityOwnershipPolicy = entityOwnershipPolicy,
                 stateBagPolicy = stateBagPolicy,
@@ -1137,7 +1229,7 @@ local defaultStages = {
                 motelProviders = motelRegistry, housingProviders = housingRegistry,
                 locationProviderApi = locationProviderApi,
                 pickupLocation = pickupLocation, pickupVehicle = pickupVehicle, pickupMode = pickupMode, dualTravel = dualTravel,
-                 npcProfileGenerator = npcProfileGenerator, npcWorker = npcWorker, marketplace = marketplace,
+                 npcProfileGenerator = npcProfileGenerator, npcWorker = npcWorker, npcPool = npcPool, marketplace = marketplace,
                  npcTravel = npcTravel, npcEntityRegistry = npcEntityRegistry, npcSpawn = npcSpawn, npcArrival = npcArrival,
                  npcStreamingBudget = npcStreamingBudget, entityOwnershipPolicy = entityOwnershipPolicy,
                  stateBagPolicy = stateBagPolicy,
@@ -1576,16 +1668,21 @@ local defaultStages = {
                 locationReservationService = locationReservation,
                 locationReservationRepository = repositories.locationReservation,
                 npcProfileRepository = repositories.npcProfile,
+                npcWorkerService = npcWorker,
                 workerAvailabilityService = workerAvailability,
                 clientModeService = clientMode,
                 workerModeService = workerMode,
                 npcTravelService = npcTravel,
                 npcEntityRegistry = npcEntityRegistry,
+                depositService = deposit,
+                refundService = refund,
                 settlementService = settlement,
                 auditService = auditService,
                 eventBus = eventBus,
                 clock = options.clock,
                 config = config.recovery,
+                environment = config.environment,
+                settlementRecoveryResolver = options.settlementRecoveryResolver or options.recoverySettlementResolver,
                 systemActor = options.recoverySystemActor,
                 actorResolver = options.recoveryActorResolver
             })
@@ -1602,7 +1699,7 @@ local defaultStages = {
                 motelProviders = motelRegistry, housingProviders = housingRegistry,
                 locationProviderApi = locationProviderApi,
                 pickupLocation = pickupLocation, pickupVehicle = pickupVehicle, pickupMode = pickupMode, dualTravel = dualTravel,
-                npcProfileGenerator = npcProfileGenerator, npcWorker = npcWorker, marketplace = marketplace,
+                npcProfileGenerator = npcProfileGenerator, npcWorker = npcWorker, npcPool = npcPool, marketplace = marketplace,
                 npcTravel = npcTravel, npcEntityRegistry = npcEntityRegistry, npcSpawn = npcSpawn, npcArrival = npcArrival,
                 npcStreamingBudget = npcStreamingBudget, entityOwnershipPolicy = entityOwnershipPolicy,
                 stateBagPolicy = stateBagPolicy,
@@ -1627,10 +1724,45 @@ local defaultStages = {
                 return { type = 'PLAYER', ref = tostring(playerSource), source = playerSource }
             end
         end
-        if framework and clientMode and type(framework.onPlayerUnloaded) == 'function' then
+        local function cleanupPlayer(playerSource, reason)
+            if playerSource == nil then return end
+            if type(recoveryService) == 'table' and type(recoveryService.disconnect) == 'function' then
+                return recoveryService:disconnect(playerSource, reason or 'player-disconnected')
+            end
+            local results = {}
+            if type(workerMode) == 'table' and type(workerMode.disconnect) == 'function' then
+                results[#results + 1] = workerMode:disconnect(playerSource, reason or 'player-disconnected')
+            end
+            if type(clientMode) == 'table' and type(clientMode.disconnect) == 'function' then
+                results[#results + 1] = clientMode:disconnect(playerSource, reason or 'player-disconnected')
+            end
+            if type(workerAvailability) == 'table' and type(workerAvailability.reset) == 'function' then
+                results[#results + 1] = workerAvailability:reset(playerSource, reason or 'player-disconnected')
+            end
+            return results
+        end
+        local addEventHandler = rawget(_G, 'AddEventHandler')
+        if type(addEventHandler) == 'function' and (recoveryService or workerMode or clientMode) then
+            addEventHandler('playerDropped', function(reason)
+                cleanupPlayer(source, reason or 'player-dropped')
+            end)
+        end
+        if type(bootstrap.onCleanup) == 'function' and (recoveryService or workerMode or clientMode) then
+            bootstrap:onCleanup(function()
+                local getPlayers = rawget(_G, 'GetPlayers')
+                if type(getPlayers) ~= 'function' then return end
+                local players = getPlayers()
+                if type(players) ~= 'table' then return end
+                for _, playerSource in ipairs(players) do
+                    cleanupPlayer(playerSource, 'resource-stopping')
+                end
+            end)
+        end
+        if framework and (recoveryService or clientMode) and type(framework.onPlayerUnloaded) == 'function' then
             pcall(framework.onPlayerUnloaded, framework, function(value)
                 local playerSource = type(value) == 'table' and value.source or value
-                if playerSource ~= nil and type(clientMode.disconnect) == 'function' then clientMode:disconnect(playerSource) end
+                if playerSource == nil then return end
+                cleanupPlayer(playerSource, 'framework-player-unloaded')
             end)
         end
         return { ok = true, services = {
@@ -1676,6 +1808,7 @@ local defaultStages = {
             vehicleLocation = vehicleLocation,
             npcProfileGenerator = npcProfileGenerator,
             npcWorker = npcWorker,
+            npcPool = npcPool,
             marketplace = marketplace,
             npcTravel = npcTravel,
             npcEntityRegistry = npcEntityRegistry,
@@ -1721,28 +1854,48 @@ defaultStages.jobs = function(context, bootstrap)
     local schedulingConfig = config.scheduling or NightShift.SchedulingConfig or {}
     local recoveryConfig = config.recovery or NightShift.RecoveryConfig or {}
     local recoveryService = options.recoveryService or options.recovery or services.recovery
+    local productionEnvironment = tostring(config.environment or ''):lower() == 'production'
+        or tostring(config.environment or ''):lower() == 'prod'
+    if productionEnvironment and (features.recovery == false or recoveryConfig.enabled == false
+        or NightShift.StartupRecoveryJob == nil) then
+        return NightShift.Result.err(NightShift.Errors.Codes.RECOVERY_REQUIRED,
+            'production startup recovery is required before READY')
+    end
     local startupRecovery, recoverySummary
     if features.recovery ~= false and recoveryConfig.enabled ~= false and NightShift.StartupRecoveryJob then
         if type(recoveryService) == 'table' and type(recoveryService.runOnce) == 'function' then
             local created, err = NightShift.StartupRecoveryJob.new({
-                recoveryService = recoveryService, config = recoveryConfig, clock = options.clock
+                recoveryService = recoveryService, config = recoveryConfig, clock = options.clock,
+                environment = config.environment
             })
             if created then
                 startupRecovery = created
                 if options.runStartupRecovery ~= false then
-                    local result = startupRecovery:runOnce(nil, { dryRun = true, apply = false })
+                    local result = startupRecovery:runOnce(nil)
                     if type(result) == 'table' and result.ok then
                         recoverySummary = result.value
-                    elseif recoveryConfig.required == true or options.requireRecoveryJob == true then
+                    elseif recoveryConfig.required == true
+                        or tostring(config.environment or ''):lower() == 'production'
+                        or tostring(config.environment or ''):lower() == 'prod'
+                        or options.requireRecoveryJob == true then
                         return result
                     else
                         recoverySummary = { deferred = true, failed = 1 }
                     end
+                elseif productionEnvironment then
+                    return NightShift.Result.err(NightShift.Errors.Codes.RECOVERY_REQUIRED,
+                        'production startup recovery cannot be skipped before READY')
                 end
-            elseif recoveryConfig.required == true or options.requireRecoveryJob == true then
+            elseif recoveryConfig.required == true
+                or tostring(config.environment or ''):lower() == 'production'
+                or tostring(config.environment or ''):lower() == 'prod'
+                or options.requireRecoveryJob == true then
                 return err
             end
-        elseif recoveryConfig.required == true or options.requireRecoveryJob == true then
+        elseif recoveryConfig.required == true
+            or tostring(config.environment or ''):lower() == 'production'
+            or tostring(config.environment or ''):lower() == 'prod'
+            or options.requireRecoveryJob == true then
             return NightShift.Result.err(NightShift.Errors.Codes.RECOVERY_NOT_READY, 'startup recovery service is unavailable')
         end
     end
@@ -1962,6 +2115,7 @@ function Bootstrap:boot(context)
         return false, self.error
     end
     self.readiness = readiness.STARTING
+    local degraded = false
     for _, stage in ipairs(NightShift.Constants.STAGES) do
         local initializer = self.stages[stage]
         local ok, result = pcall(initializer, context, self)
@@ -1976,9 +2130,27 @@ function Bootstrap:boot(context)
             self.error = failure(stage, type(result) == 'table' and result or 'initializer returned no success result')
             return false, self.error
         end
+        if type(result) == 'table' and result.deferred == true then
+            local configResult = self.results.config or {}
+            local config = configResult.config or configResult.value and configResult.value.config or {}
+            local environment = tostring(config.environment or 'development'):lower()
+            local strict = environment == 'production' or environment == 'prod'
+                or (type(config.features) == 'table' and config.features.persistence == true)
+                or self.options.failClosed == true
+            if strict then
+                self.readiness = readiness.FAILED
+                self.error = failure(stage, {
+                    code = 'BOOTSTRAP_DEPENDENCY_UNAVAILABLE',
+                    message = 'required runtime dependency is unavailable',
+                    details = { stage = stage, reason = result.reason }
+                })
+                return false, self.error
+            end
+            degraded = true
+        end
         self.results[stage] = result
     end
-    self.readiness = readiness.READY
+    self.readiness = degraded and readiness.DEGRADED or readiness.READY
     self.error = nil
     return true, self.results
 end

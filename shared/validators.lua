@@ -722,6 +722,111 @@ local function validateRecoveryConfig(raw)
     }
 end
 
+local function validateNpcStreamingConfig(raw, environment, physicalNpc)
+    if raw == nil then raw = NightShift.NpcStreamingConfig or {} end
+    if type(raw) ~= 'table' then return fail('INVALID_CONFIG', 'npcStreaming', 'NPC streaming configuration must be a table') end
+    local allowed = {
+        enabled = true, spawnThreshold = true, arrivalRadius = true,
+        navigationTimeout = true, stuckTimeout = true, playerAwayDistance = true,
+        maxPlausibleArrivalDistance = true, defaultEtaSeconds = true,
+        returnCooldownSeconds = true, budget = true, modelAllowlist = true,
+        defaultModel = true
+    }
+    for key in pairs(raw) do
+        if not allowed[key] then return fail('INVALID_CONFIG', 'npcStreaming.' .. tostring(key), 'NPC streaming field is not allowlisted') end
+    end
+    local enabled, enabledError = booleanValue(raw.enabled, 'npcStreaming.enabled', true)
+    if enabled == nil then return nil, enabledError end
+    local function bounded(name, fallback, minimum, maximum)
+        local value = raw[name] == nil and fallback or tonumber(raw[name])
+        if not finite(value) or value < minimum or value > maximum then
+            return fail('INVALID_CONFIG', 'npcStreaming.' .. name, 'NPC streaming value is outside safe bounds')
+        end
+        return value
+    end
+    local threshold, thresholdError = bounded('spawnThreshold', 0.65, 0, 1)
+    if threshold == nil then return nil, thresholdError end
+    local arrival, arrivalError = bounded('arrivalRadius', 4, 0.1, 100)
+    if arrival == nil then return nil, arrivalError end
+    local navigation, navigationError = bounded('navigationTimeout', 120, 1, 86400)
+    if navigation == nil then return nil, navigationError end
+    local stuck, stuckError = bounded('stuckTimeout', 15, 1, 3600)
+    if stuck == nil then return nil, stuckError end
+    local away, awayError = bounded('playerAwayDistance', 120, 1, 100000)
+    if away == nil then return nil, awayError end
+    local plausible, plausibleError = bounded('maxPlausibleArrivalDistance', 12, 0.1, 100000)
+    if plausible == nil then return nil, plausibleError end
+    local eta, etaError = bounded('defaultEtaSeconds', 60, 0, 86400)
+    if eta == nil then return nil, etaError end
+    local cooldown, cooldownError = bounded('returnCooldownSeconds', 15, 0, 86400)
+    if cooldown == nil then return nil, cooldownError end
+    local budget = raw.budget == nil and {} or raw.budget
+    if type(budget) ~= 'table' then return fail('INVALID_CONFIG', 'npcStreaming.budget', 'NPC streaming budget must be a table') end
+    local budgetAllowed = {
+        enabled = true, maxActive = true, maxPerSource = true,
+        maxPerDistrict = true, maxTracked = true, leaseSeconds = true
+    }
+    for key in pairs(budget) do
+        if not budgetAllowed[key] then return fail('INVALID_CONFIG', 'npcStreaming.budget.' .. tostring(key), 'NPC budget field is not allowlisted') end
+    end
+    local budgetEnabled, budgetEnabledError = booleanValue(budget.enabled, 'npcStreaming.budget.enabled', true)
+    if budgetEnabled == nil then return nil, budgetEnabledError end
+    local function budgetInteger(name, fallback, minimum, maximum)
+        local value = budget[name] == nil and fallback or tonumber(budget[name])
+        if not finite(value) or value < minimum or value > maximum or value ~= math.floor(value) then
+            return fail('INVALID_CONFIG', 'npcStreaming.budget.' .. name, 'NPC budget value is outside safe bounds')
+        end
+        return value
+    end
+    local maxActive, maxActiveError = budgetInteger('maxActive', 64, 1, 100000)
+    if maxActive == nil then return nil, maxActiveError end
+    local maxPerSource, maxPerSourceError = budgetInteger('maxPerSource', 8, 1, 100000)
+    if maxPerSource == nil then return nil, maxPerSourceError end
+    local maxPerDistrict, maxPerDistrictError = budgetInteger('maxPerDistrict', 32, 1, 100000)
+    if maxPerDistrict == nil then return nil, maxPerDistrictError end
+    local maxTracked, maxTrackedError = budgetInteger('maxTracked', 512, 1, 1000000)
+    if maxTracked == nil then return nil, maxTrackedError end
+    local leaseSeconds, leaseError = budgetInteger('leaseSeconds', 120, 1, 86400)
+    if leaseSeconds == nil then return nil, leaseError end
+    local models = raw.modelAllowlist == nil and {} or raw.modelAllowlist
+    if type(models) ~= 'table' then return fail('INVALID_CONFIG', 'npcStreaming.modelAllowlist', 'NPC model allowlist must be a table') end
+    local normalizedModels, modelCount = {}, 0
+    for key, value in pairs(models) do
+        local model = type(key) == 'number' and value or key
+        local allowedValue = type(key) == 'number' and true or value
+        if not token(model, 96) or allowedValue ~= true then
+            return fail('INVALID_CONFIG', 'npcStreaming.modelAllowlist', 'NPC model allowlist contains an invalid entry')
+        end
+        normalizedModels[model] = true
+        modelCount = modelCount + 1
+        if modelCount > 128 then return fail('INVALID_CONFIG', 'npcStreaming.modelAllowlist', 'NPC model allowlist is too large') end
+    end
+    local defaultModel = raw.defaultModel
+    if defaultModel ~= nil and not token(defaultModel, 96) then
+        return fail('INVALID_CONFIG', 'npcStreaming.defaultModel', 'NPC default model is invalid')
+    end
+    if defaultModel ~= nil and modelCount > 0 and not normalizedModels[defaultModel] then
+        return fail('INVALID_CONFIG', 'npcStreaming.defaultModel', 'NPC default model is not allowlisted')
+    end
+    local strict = tostring(environment or 'development'):lower() == 'production'
+        or tostring(environment or ''):lower() == 'prod' or physicalNpc == true
+    if strict and (modelCount == 0 or defaultModel == nil or not normalizedModels[defaultModel]) then
+        return fail('NPC_SPAWN_MODEL_NOT_ALLOWED', 'npcStreaming.modelAllowlist',
+            'production physical NPCs require a non-empty allowlist and allowlisted default model')
+    end
+    return {
+        enabled = enabled, spawnThreshold = threshold, arrivalRadius = arrival,
+        navigationTimeout = navigation, stuckTimeout = stuck, playerAwayDistance = away,
+        maxPlausibleArrivalDistance = plausible, defaultEtaSeconds = eta,
+        returnCooldownSeconds = cooldown,
+        budget = { enabled = budgetEnabled, maxActive = maxActive,
+            maxPerSource = maxPerSource, maxPerDistrict = maxPerDistrict,
+            maxTracked = maxTracked, leaseSeconds = leaseSeconds },
+        modelAllowlist = normalizedModels,
+        defaultModel = defaultModel
+    }
+end
+
 local function validateSecurityConfig(raw)
     if raw == nil then raw = NightShift.SecurityConfig or {} end
     if type(raw) ~= 'table' then return fail('INVALID_CONFIG', 'security', 'security configuration must be a table') end
@@ -785,14 +890,17 @@ local function validateSecurityConfig(raw)
     local actionTokenConfig = raw.actionTokens == nil and {} or raw.actionTokens
     if type(actionTokenConfig) ~= 'table' then return fail('INVALID_CONFIG', 'security.actionTokens', 'action token configuration must be a table') end
     for key in pairs(actionTokenConfig) do
-        if key ~= 'enabled' and key ~= 'enforce' and key ~= 'ttlSeconds' and key ~= 'maxActive' and key ~= 'maxTokenLength' then
+        if key ~= 'enabled' and key ~= 'enforce' and key ~= 'developmentOptOut' and key ~= 'ttlSeconds' and key ~= 'maxActive' and key ~= 'maxTokenLength' then
             return fail('INVALID_CONFIG', 'security.actionTokens.' .. tostring(key), 'action token field is not allowlisted')
         end
     end
     local tokenEnabled, tokenEnabledError = booleanValue(actionTokenConfig.enabled, 'security.actionTokens.enabled', true)
     if tokenEnabled == nil then return nil, tokenEnabledError end
-    local enforce, enforceError = booleanValue(actionTokenConfig.enforce, 'security.actionTokens.enforce', false)
+    local enforce, enforceError = booleanValue(actionTokenConfig.enforce, 'security.actionTokens.enforce', true)
     if enforce == nil then return nil, enforceError end
+    local developmentOptOut, developmentOptOutError = booleanValue(actionTokenConfig.developmentOptOut,
+        'security.actionTokens.developmentOptOut', false)
+    if developmentOptOut == nil then return nil, developmentOptOutError end
     local ttl = actionTokenConfig.ttlSeconds == nil and 90 or tonumber(actionTokenConfig.ttlSeconds)
     if not finite(ttl) or ttl < 1 or ttl > 3600 or ttl ~= math.floor(ttl) then
         return fail('INVALID_CONFIG', 'security.actionTokens.ttlSeconds', 'action token TTL is outside safe bounds')
@@ -809,7 +917,7 @@ local function validateSecurityConfig(raw)
         enabled = enabled, persistentCounters = persistent, maxBuckets = maxBuckets,
         rateLimit = { enabled = rateEnabled, default = defaultRule, actions = normalizedActions },
         actionTokens = {
-            enabled = tokenEnabled, enforce = enforce, ttlSeconds = ttl,
+            enabled = tokenEnabled, enforce = enforce, developmentOptOut = developmentOptOut, ttlSeconds = ttl,
             maxActive = maxActive, maxTokenLength = maxTokenLength
         }
     }
@@ -961,7 +1069,7 @@ end
 
 function V.validateConfig(input, options)
     options=options or {}; if input==nil then input=NightShift.DefaultConfig end; if type(input)~='table' then return fail('INVALID_CONFIG','config','configuration must be a table') end
-    local out=copy(input); local raw=rawget(input,'provider'); if raw==nil then raw=rawget(input,'providerSelection') end; local provider=raw==nil and {} or raw
+    local out=copy(input); local environment=rawget(input,'environment'); environment=environment==nil and 'development' or tostring(environment):lower(); if environment=='prod' then environment='production' end; if environment~='development' and environment~='production' and environment~='staging' and environment~='test' then return fail('INVALID_CONFIG','environment','environment is invalid') end; out.environment=environment; local raw=rawget(input,'provider'); if raw==nil then raw=rawget(input,'providerSelection') end; local provider=raw==nil and {} or raw
     if type(provider)=='string' then provider={mode='explicit',name=provider} end; if type(provider)~='table' then return fail('INVALID_CONFIG','provider','provider selection must be a table') end
     local mode=rawget(provider,'mode'); mode=mode==nil and 'auto' or mode; if not NightShift.ProviderModes[mode] then return fail('INVALID_CONFIG','provider.mode','provider mode must be auto or explicit') end
     local registry=options.registry or NightShift.ProviderRegistry; if type(registry)~='table' then return fail('INVALID_CONFIG','provider','provider registry is invalid') end
@@ -982,6 +1090,7 @@ function V.validateConfig(input, options)
     local pricing, pricingError = validatePricing(rawget(input, 'pricing')); if not pricing then return nil, pricingError end; out.pricing = pricing
     local cancellation, cancellationError = validateCancellation(rawget(input, 'cancellation')); if not cancellation then return nil, cancellationError end; out.cancellation = cancellation
     local profiles,pr=ids(input.npcProfiles==nil and {} or input.npcProfiles,'npcProfiles','NPC profile'); if not profiles then return nil,pr end; local allowed={id=true,availability=true,traits=true,tags=true,displayName=true}; for i,p in ipairs(profiles) do for k,v in pairs(p) do if not allowed[k] then return fail('INVALID_CONFIG','npcProfiles['..i..'].'..tostring(k),'NPC profile field is not abstract/allowlisted') end; if (k=='availability' or k=='displayName') and (not text(v) or #v>80) then return fail('INVALID_CONFIG','npcProfiles['..i..'].'..tostring(k),'NPC profile scalar is invalid') end; if k=='traits' or k=='tags' then local ok,e=array(v,'npcProfiles['..i..'].'..tostring(k),'NPC profile list'); if not ok then return nil,e end; for j,item in ipairs(v) do if not text(item) or #item>40 then return fail('INVALID_CONFIG','npcProfiles['..i..'].'..tostring(k)..'['..j..']','NPC profile list value is invalid') end end end end end; out.npcProfiles=profiles
+    local npcStreaming, npcStreamingError = validateNpcStreamingConfig(rawget(input, 'npcStreaming'), environment, features.physicalNpc); if not npcStreaming then return nil, npcStreamingError end; out.npcStreaming = npcStreaming
     local demand, demandError = validateDemandConfig(rawget(input, 'demand')); if not demand then return nil, demandError end
     local heat, heatError = validateHeatConfig(rawget(input, 'heat')); if not heat then return nil, heatError end
     local vice, viceError = validateViceConfig(rawget(input, 'vice')); if not vice then return nil, viceError end

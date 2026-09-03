@@ -23,16 +23,16 @@ the last safe identity snapshot after QBCore removes the player object.
 
 | ID | Flow | Expected evidence | Status |
 | --- | --- | --- | --- |
-| QB-01 | identity/load/unload | normalized identifier, character ID/name, loaded=true; unload invalidates the source cache | Contract PASS; live operator run |
-| QB-02 | job/duty | OnJobUpdate and SetDuty update normalized job/grade/duty | Contract PASS; live operator run |
-| QB-03 | money/deposit/refund | cash/bank debit, credit, insufficient-funds failure, idempotent deposit/refund | Contract PASS; live operator run |
-| QB-04 | Worker Mode | S11 vertical slice reaches SETTLED once and releases worker/location locks | Existing S11 contracts PASS; live operator run |
-| QB-05 | Client COME_TO_ME | quote -> reserve -> travel -> spawn/arrival -> session -> settlement | S13 contracts PASS; live operator run |
-| QB-06 | Client PICKUP | safe pickup claim, vehicle binding, destination arrival, settlement | S14 contracts PASS; live operator run |
-| QB-07 | Client MEET_THERE | dual arrival barrier and one settlement | S15 contracts PASS; live operator run |
-| QB-08 | reconnect/recovery | logout releases identity/permission cache; reconnect refreshes the ephemeral source | Contract PASS; live operator run |
-| QB-09 | standalone NUI | panel opens only on an explicit UI action; closed state has no active panel | NUI visibility PASS; live operator run |
-| QB-10 | location provider/fallback | configured location works; missing optional provider returns typed fallback/unavailable result | Provider contracts PASS; live operator run |
+| QB-01 | identity/load/unload | normalized identifier, character ID/name, loaded=true; unload invalidates the source cache | Automated contract PASS; live BLOCKED — operator evidence required |
+| QB-02 | job/duty | OnJobUpdate and SetDuty update normalized job/grade/duty | Automated contract PASS; live BLOCKED — operator evidence required |
+| QB-03 | money/deposit/refund | cash/bank debit, credit, insufficient-funds failure, idempotent deposit/refund | Automated contract PASS; live BLOCKED — operator evidence required |
+| QB-04 | Worker Mode | S11 vertical slice reaches SETTLED once and releases worker/location locks | Existing S11 contracts PASS; live BLOCKED — operator evidence required |
+| QB-05 | Client COME_TO_ME | quote -> reserve -> travel -> spawn/arrival -> session -> settlement | S13 contracts PASS; live BLOCKED — operator evidence required |
+| QB-06 | Client PICKUP | safe pickup claim, vehicle binding, destination arrival, settlement | S14 contracts PASS; live BLOCKED — operator evidence required |
+| QB-07 | Client MEET_THERE | dual arrival barrier and one settlement | S15 contracts PASS; live BLOCKED — operator evidence required |
+| QB-08 | reconnect/recovery | logout releases identity/permission cache; reconnect refreshes the ephemeral source | Automated contract PASS; live BLOCKED — operator evidence required |
+| QB-09 | standalone NUI | panel opens only on an explicit UI action; closed state has no active panel | NUI visibility PASS; live BLOCKED — operator evidence required |
+| QB-10 | location provider/fallback | configured location works; missing optional provider returns typed fallback/unavailable result | Provider contracts PASS; live BLOCKED — operator evidence required |
 
 ## Live evidence procedure
 
@@ -47,6 +47,13 @@ the last safe identity snapshot after QBCore removes the player object.
 The live rows are deployment evidence, not a reason to add framework branches
 to core services. Any QBCore-only failure belongs in this adapter or its
 configuration.
+
+## Live evidence record
+
+`BLOCKED` — this checkout contains no target FXServer run record. Provider
+version, FXServer artifact, environment/config flags, timestamp, logs, and
+cleanup verification must be recorded by the operator before these rows can
+be promoted from live BLOCKED to live PASS.
 
 ## Release decision
 

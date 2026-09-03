@@ -1,4 +1,5 @@
 "use client"
+/* oxlint-disable react(only-export-components) -- variant factory is intentionally colocated with the primitive. */
 
 import { Toggle as TogglePrimitive } from "@base-ui/react/toggle"
 import { cva, type VariantProps } from "class-variance-authority"
@@ -42,4 +43,5 @@ function Toggle({
   )
 }
 
+// oxlint-disable-next-line react/only-export-components
 export { Toggle, toggleVariants }

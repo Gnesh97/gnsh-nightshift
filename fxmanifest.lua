@@ -202,14 +202,15 @@ server_scripts {
 }
 client_scripts {
     'client/bootstrap.lua',
-    'client/nui.lua',
-    'client/adapters/target/interface.lua',
-    'client/adapters/notify/interface.lua',
     'client/core/result.lua',
     'client/npc/entity_registry.lua',
     'client/npc/spawn.lua',
     'client/npc/navigation.lua',
     'client/npc/despawn.lua',
+    'client/npc/coordinator.lua',
+    'client/nui.lua',
+    'client/adapters/target/interface.lua',
+    'client/adapters/notify/interface.lua',
     'client/client_mode/pickup.lua',
     'client/worker_mode/customer_candidates.lua',
     'client/interaction/session.lua',

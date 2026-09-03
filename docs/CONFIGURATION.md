@@ -10,9 +10,44 @@ provider = { mode = 'explicit', name = 'standalone' } is the safe development de
 
 workerMode, clientMode, serviceCatalog, pricing, reputation, scheduling, safety, security, recovery, and domainEvents are enabled by default. payments, deposits, and physical NPCs are off by default. developmentSettlement is for controlled development smoke only and has no money effects.
 
+## Runtime environment and readiness
+
+The effective environment can be selected without editing source: set the
+`nightshift_environment` convar to `development`, `staging`, or `production`.
+An incomplete development boot is reported as `DEGRADED`; production and
+persistent boots fail closed when database, provider, repository, booking, or
+mode dependencies are unavailable. `READY` is reserved for a complete service
+graph.
+
 ## Persistence and security
 
-nightshift_persistence is a runtime convar. Security rate limits are enabled by default; action-token enforcement is intentionally opt-in until all callers use the token contract. Never place credentials, secrets, or authoritative prices in client config.
+`nightshift_persistence`, `nightshift_framework`, `nightshift_provider`, and
+`nightshift_money_provider` are runtime convars. Feature overrides are
+available through `nightshift_payments`, `nightshift_developmentSettlement`,
+`nightshift_physicalNpc`, and `nightshift_deposits`. In production,
+development settlement is disabled and startup recovery defaults to applying
+the configured policy; `nightshift_recovery_apply=false` intentionally fails
+the production readiness gate.
+
+Completed-booking settlement recovery is fail-closed by default. A runtime
+integration may inject `settlementRecoveryResolver` into the bootstrap options;
+it must return `approved=true`, an actor with a source, and distinct validated
+`payerSource`/`payeeSource` values. Without that provider-owned resolver the
+booking remains pending for operator reconciliation; no `server.cfg` fallback
+or guessed player identity is used.
+
+Security rate limits and action-token enforcement are enabled by default. The
+only token opt-out is an explicit `developmentOptOut=true` in development.
+Never place credentials, secrets, authoritative prices, or client-owned
+coordinates in client config.
+
+## NPC streaming
+
+`npcStreaming.modelAllowlist` and `defaultModel` define the only models that a
+physical NPC projection may use. Production (or `physicalNpc=true`) requires
+an explicit non-empty allowlist containing the default model. The bootstrap
+initializes the logical worker pool idempotently; it never creates duplicate
+workers on restart.
 
 ## Packages and locations
 

@@ -1,3 +1,4 @@
+/* oxlint-disable react(only-export-components) -- variant factory is intentionally colocated with the primitive. */
 import { mergeProps } from "@base-ui/react/merge-props"
 import { useRender } from "@base-ui/react/use-render"
 import { cva, type VariantProps } from "class-variance-authority"
@@ -49,4 +50,5 @@ function Badge({
   })
 }
 
+// oxlint-disable-next-line react/only-export-components
 export { Badge, badgeVariants }

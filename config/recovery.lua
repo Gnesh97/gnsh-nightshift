@@ -1,7 +1,8 @@
 NightShift = NightShift or {}
 
--- Recovery is intentionally bounded. It reconciles only a finite page window
--- before READY and leaves unresolved financial effects visible for retry.
+-- Recovery is intentionally bounded. Development keeps an observation-only
+-- default; production bootstrap promotes this policy to apply=true unless an
+-- explicit runtime override disables it (which then fails readiness).
 NightShift.RecoveryConfig = NightShift.RecoveryConfig or {
     enabled = true,
     required = false,

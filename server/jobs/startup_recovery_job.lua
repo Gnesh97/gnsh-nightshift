@@ -21,6 +21,11 @@ local function invalid(message)
     return Result.err(Codes.RECOVERY_INVALID, message)
 end
 
+local function isProduction(environment)
+    environment = type(environment) == 'string' and environment:lower() or ''
+    return environment == 'production' or environment == 'prod'
+end
+
 function Job.new(options)
     options = options or {}
     if type(options) ~= 'table' then return nil, invalid('startup recovery options must be a table') end
@@ -33,9 +38,12 @@ function Job.new(options)
     local enabled = config.enabled
     if enabled == nil then enabled = true end
     if type(enabled) ~= 'boolean' then return nil, invalid('startup recovery enabled flag must be boolean') end
+    local production = isProduction(options.environment)
     return setmetatable({
         _recovery = recovery, _clock = options.clock, _enabled = enabled,
-        _required = config.required == true, _ran = false, _lastRun = nil
+        _required = config.required == true or production, _production = production,
+        _apply = config.apply == true and production,
+        _ran = false, _lastRun = nil
     }, Job)
 end
 
@@ -48,15 +56,16 @@ function Job:runOnce(suppliedNow, options)
         self._lastRun = { skipped = true, scanned = 0, pages = 0, recovered = 0, preserved = 0, pending = 0, failed = 0 }
         return Result.ok(copy(self._lastRun), { disabled = true })
     end
-    -- Startup is observation-only by design. Applying resource or financial
-    -- recovery requires an explicit operator call with apply=true and the
-    -- recovery config flag enabled.
+    if self._production and not self._apply then
+        return Result.err(Codes.RECOVERY_REQUIRED,
+            'production startup recovery requires recovery.apply=true before READY')
+    end
+    -- Development startup remains observational unless an operator explicitly
+    -- requests apply=true. Production startup uses the configured apply
+    -- policy so READY is never published with unreconciled resources.
     local runOptions = copy(options)
-    -- The startup gate is always observational.  Resource/financial
-    -- mutations belong to a separately reviewed operator action, never to
-    -- the READY transition.
-    runOptions.apply = false
-    runOptions.dryRun = true
+    runOptions.apply = self._apply
+    runOptions.dryRun = not self._apply
     local result = self._recovery:runOnce(suppliedNow, runOptions)
     if type(result) ~= 'table' then return Result.err(Codes.RECOVERY_OPERATION_FAILED, 'startup recovery returned an invalid result') end
     if result.ok ~= true then
@@ -65,11 +74,13 @@ function Job:runOnce(suppliedNow, options)
         self._lastRun = { failed = 1, scanned = 0, pages = 0, pending = 0, recovered = 0, preserved = 0 }
         return Result.ok(copy(self._lastRun), { deferred = true, cause = result.error and result.error.code })
     end
-    self._ran = true
     self._lastRun = copy(result.value or {})
-    if self._required and tonumber(self._lastRun.failed or 0) > 0 then
+    if (self._required or self._production) and
+        (tonumber(self._lastRun.failed or 0) > 0 or tonumber(self._lastRun.pending or 0) > 0) then
+        self._ran = false
         return Result.err(Codes.RECOVERY_REQUIRED, 'startup recovery reported unresolved failures', { summary = copy(self._lastRun) })
     end
+    self._ran = true
     return Result.ok(copy(self._lastRun), result.metadata)
 end
 
@@ -83,7 +94,8 @@ function Job:stop()
 end
 
 function Job:status()
-    return Result.ok({ enabled = self._enabled, required = self._required, ran = self._ran, lastRun = copy(self._lastRun) })
+    return Result.ok({ enabled = self._enabled, required = self._required, production = self._production,
+        apply = self._apply, ran = self._ran, lastRun = copy(self._lastRun) })
 end
 
 NightShift.StartupRecoveryJob = Job

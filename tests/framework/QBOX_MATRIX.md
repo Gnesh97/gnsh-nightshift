@@ -31,14 +31,14 @@ post-logout event.
 
 | ID | Flow | Expected evidence | Status |
 | --- | --- | --- | --- |
-| QX-01 | player load/logout | normalized identity on load; post-logout callback carries loaded=false and releases the snapshot | Contract PASS; live operator run |
-| QX-02 | job/duty update | Qbox job grade and SetDuty boolean map to the normalized job DTO | Contract PASS; live operator run |
-| QX-03 | money | qbx money get/remove/add operations use the Qbox money adapter and fail closed when unavailable | Contract PASS; live operator run |
-| QX-04 | Worker Mode | S11 negotiation and session use the same unified booking core and settle once | Existing S11 contracts PASS; live operator run |
-| QX-05 | all Client modes | COME_TO_ME, PICKUP, and MEET_THERE retain mode-specific travel only | S13-S15 contracts PASS; live operator run |
-| QX-06 | reconnect | source reuse refreshes identity and does not inherit the old character/profile | Contract PASS; live operator run |
-| QX-07 | provider capabilities | qboxNative, lifecycle, job, duty, money, and identity capabilities are reported accurately | Contract PASS; live operator run |
-| QX-08 | optional provider absence | NUI, locations, target fallback, notifications, dispatch, and appearance degrade independently | Provider-minimal PASS; live operator run |
+| QX-01 | player load/logout | normalized identity on load; post-logout callback carries loaded=false and releases the snapshot | Automated contract PASS; live BLOCKED — operator evidence required |
+| QX-02 | job/duty update | Qbox job grade and SetDuty boolean map to the normalized job DTO | Automated contract PASS; live BLOCKED — operator evidence required |
+| QX-03 | money | qbx money get/remove/add operations use the Qbox money adapter and fail closed when unavailable | Automated contract PASS; live BLOCKED — operator evidence required |
+| QX-04 | Worker Mode | S11 negotiation and session use the same unified booking core and settle once | Existing S11 contracts PASS; live BLOCKED — operator evidence required |
+| QX-05 | all Client modes | COME_TO_ME, PICKUP, and MEET_THERE retain mode-specific travel only | S13-S15 contracts PASS; live BLOCKED — operator evidence required |
+| QX-06 | reconnect | source reuse refreshes identity and does not inherit the old character/profile | Automated contract PASS; live BLOCKED — operator evidence required |
+| QX-07 | provider capabilities | qboxNative, lifecycle, job, duty, money, and identity capabilities are reported accurately | Automated contract PASS; live BLOCKED — operator evidence required |
+| QX-08 | optional provider absence | NUI, locations, target fallback, notifications, dispatch, and appearance degrade independently | Provider-minimal PASS; live BLOCKED — operator evidence required |
 
 ## Live evidence procedure
 
@@ -55,3 +55,9 @@ post-logout event.
 The Qbox adapter contract is independent and automated PASS. Live Qbox rows are
 still required on the target server. A Qbox-specific failure blocks release;
 no compatibility alias or core patch is an acceptable workaround.
+
+## Live evidence record
+
+`BLOCKED` — no qbx_core/FXServer run record is stored in this checkout. Add the
+provider version, FXServer artifact, environment/config flags, timestamp, logs,
+and cleanup verification before marking a live row PASS.

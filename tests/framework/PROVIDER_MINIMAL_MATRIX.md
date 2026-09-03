@@ -22,14 +22,14 @@ fabricate a success or expose a raw external handle.
 
 | ID | Flow | Expected evidence | Status |
 | --- | --- | --- | --- |
-| PM-01 | standalone NUI | resource load leaves the panel hidden; an explicit command/action opens it | NUI visibility PASS; live operator run |
-| PM-02 | config locations | allowlisted config location resolves and invalid references fail closed | Location contracts PASS; live operator run |
-| PM-03 | no target provider | interaction registration returns the local fallback; core remains usable | Contract PASS; live operator run |
-| PM-04 | standalone notifications | notify adapter returns a local fallback without a hard dependency | Contract PASS; live operator run |
-| PM-05 | no dispatch | safety/incident path records a skipped optional dispatch result | Contract PASS; live operator run |
-| PM-06 | no appearance | NPC appearance uses the bounded fallback and does not block spawn logic | Contract PASS; live operator run |
-| PM-07 | no phone/housing/motel | marketplace and configured-location flows remain available; unsupported external operations are typed | Contract PASS; live operator run |
-| PM-08 | no provider leakage | DTOs and diagnostics contain capability/status metadata only, never raw provider objects | Provider and DTO contracts PASS; live operator run |
+| PM-01 | standalone NUI | resource load leaves the panel hidden; an explicit command/action opens it | NUI visibility PASS; live BLOCKED — operator evidence required |
+| PM-02 | config locations | allowlisted config location resolves and invalid references fail closed | Location contracts PASS; live BLOCKED — operator evidence required |
+| PM-03 | no target provider | interaction registration returns the local fallback; core remains usable | Automated contract PASS; live BLOCKED — operator evidence required |
+| PM-04 | standalone notifications | notify adapter returns a local fallback without a hard dependency | Automated contract PASS; live BLOCKED — operator evidence required |
+| PM-05 | no dispatch | safety/incident path records a skipped optional dispatch result | Automated contract PASS; live BLOCKED — operator evidence required |
+| PM-06 | no appearance | NPC appearance uses the bounded fallback and does not block spawn logic | Automated contract PASS; live BLOCKED — operator evidence required |
+| PM-07 | no phone/housing/motel | marketplace and configured-location flows remain available; unsupported external operations are typed | Automated contract PASS; live BLOCKED — operator evidence required |
+| PM-08 | no provider leakage | DTOs and diagnostics contain capability/status metadata only, never raw provider objects | Provider and DTO contracts PASS; live BLOCKED — operator evidence required |
 
 ## Live evidence procedure
 
@@ -47,3 +47,9 @@ fabricate a success or expose a raw external handle.
 Provider absence is not a release blocker when the documented fallback or
 typed-unavailable contract is observed. A raw-handle leak, fabricated success,
 or optional provider becoming a hard core dependency is a release blocker.
+
+## Live evidence record
+
+`BLOCKED` — no provider-minimal FXServer run record is stored in this checkout.
+Record the omitted resources, provider versions, FXServer artifact, timestamp,
+logs, and cleanup verification before marking a live row PASS.

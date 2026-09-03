@@ -213,8 +213,21 @@ function Service:submit(source, payload)
     })
 end
 
-function Service:get(bookingId)
+function Service:get(source, bookingId)
+    -- Reviews are participant-scoped.  Do not expose a booking's review by ID
+    -- alone; resolve the caller's server identity and verify client ownership.
+    if bookingId == nil then bookingId, source = source, nil end
     if not identifier(bookingId) then return invalid('review booking ID is invalid') end
+    if source == nil then return Result.err(Codes.API_FORBIDDEN, 'review caller is required') end
+    local currentActor, actorError = actor(self, source)
+    if not currentActor then return actorError end
+    local bookingResult = self._booking:get(bookingId)
+    if type(bookingResult) ~= 'table' or not bookingResult.ok then return bookingResult end
+    local booking = bookingResult.value or {}
+    if tostring(booking.clientType or ''):upper() ~= 'PLAYER'
+        or tostring(booking.clientRef or '') ~= tostring(currentActor.ref) then
+        return Result.err(Codes.API_FORBIDDEN, 'review caller is not a booking participant')
+    end
     local result = self._repository:findByBooking(bookingId)
     if type(result) ~= 'table' then return Result.err(Codes.REVIEW_OPERATION_FAILED, 'review lookup returned an invalid result') end
     if not result.ok then
