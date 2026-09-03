@@ -1,0 +1,76 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-destructive: var(--destructive);
+}
+
+:root {
+  --radius: 0rem;
+  /*
+   * FiveM's embedded Chromium does not consistently parse OKLCH. Keep the
+   * runtime theme in hex so CSS variables resolve to opaque colors in-game.
+   */
+  --background: #202027;
+  --foreground: #f1eee8;
+  --card: #29282f;
+  --card-foreground: #f1eee8;
+  --popover: #2d2c34;
+  --popover-foreground: #f1eee8;
+  --primary: #d84a3a;
+  --primary-foreground: #fffaf2;
+  --secondary: #39383f;
+  --secondary-foreground: #f1eee8;
+  --muted: #34333a;
+  --muted-foreground: #b8b4ae;
+  --accent: #414047;
+  --accent-foreground: #f5f0e8;
+  --border: #55535c;
+  --input: #47454e;
+  --ring: #ff735c;
+  --destructive: #f05a43;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  min-height: 100%;
+  background: transparent;
+}
+
+html[data-nui-visible="false"] body {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+body {
+  margin: 0;
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@layer base {
+  button:not(:disabled), [role="button"]:not(:disabled) { cursor: pointer; }
+}
