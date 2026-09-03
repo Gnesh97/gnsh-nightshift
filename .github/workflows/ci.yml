@@ -1,0 +1,56 @@
+name: gnsh-nightshift-ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Lua
+        uses: leafo/gh-actions-lua@v10
+        with:
+          luaVersion: 5.4
+      - name: Lua contracts
+        run: lua tests/run.lua
+      - name: Lua syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          find client server shared config tests -name '*.lua' -print0 | xargs -0 -n1 luac -p
+      - name: Web install and build
+        working-directory: web
+        run: |
+          npm ci --ignore-scripts
+          npm run lint
+          npm run build
+      - name: Release builder tests
+        run: python -m unittest tests/release_builder_test.py
+      - name: Migration and locale checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          migrations = sorted(Path("sql").glob("[0-9][0-9][0-9]_*.sql"))
+          numbers = [int(path.name[:3]) for path in migrations]
+          assert migrations, "no SQL migrations found"
+          assert numbers == list(range(1, len(numbers) + 1)), numbers
+
+          locale_dirs = [path for path in Path(".").rglob("*") if path.is_dir() and path.name.lower() == "locales"]
+          if locale_dirs:
+              for locale_dir in locale_dirs:
+                  assert any(locale_dir.iterdir()), f"empty locale directory: {locale_dir}"
+          else:
+              print("No locale bundle is shipped; UI copy uses the typed web fallback.")
+          PY
+          test "$(find config -maxdepth 1 -type f -name '*.lua' | wc -l)" -gt 0
+          python scripts/build_release.py --version 0.0.0-ci --output "$RUNNER_TEMP/gnsh-release"
+      - name: Secret scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v gitleaks >/dev/null 2>&1; then gitleaks detect --no-banner --redact; else echo 'gitleaks unavailable; skipped'; fi

@@ -6,8 +6,8 @@
 .env.*
 node_modules/
 vendor/
+__pycache__/
 
 # FiveM/server runtime output
 logs/
 *.log
-
