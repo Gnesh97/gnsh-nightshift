@@ -11,7 +11,7 @@ remain product requirements, not runtime instructions.
 | --- | --- | --- |
 | Lua contracts | PASS | `lua tests/run.lua` — exit code 0; the event-bus failure-isolation case is intentionally exercised and captured by a silent test sink |
 | Lua syntax | PASS | `luac -p` over `client/`, `server/`, `shared/`, `config/`, `tests/` — exit code 0 |
-| Python quality gates | PASS | `python -m unittest discover -s tests -p '*_test.py' -v` — 11 tests, exit code 0 |
+| Python quality gates | PASS | `python -m unittest discover -s tests -p '*_test.py' -v` — 12 tests, exit code 0 |
 | NUI lint | PASS | `npm run lint -- --deny-warnings` from `web/` — exit code 0 |
 | NUI build | PASS | `npm run build` from `web/` — exit code 0 |
 | Locale parity | PASS | `scripts/validate_locales.py` covered by the Python suite |

@@ -168,6 +168,13 @@ do
     dofile('server/api/nui_callbacks.lua')
     local handler = listeners['gnsh-nightshift:nui:request']
     check(type(handler) == 'function', 'NUI request handler must be registered')
+    _G.source = '12'
+    handler('string-source', 'favorite:list', {})
+    local stringSourceResponse = responses[#responses]
+    check(stringSourceResponse and stringSourceResponse.id == 'string-source'
+        and tonumber(stringSourceResponse.source) == 12 and stringSourceResponse.result,
+        'NUI request must normalize a string player source')
+    _G.source = 12
     handler('generation-ok', 'security:action-token', {
         bookingId = 77, action = 'client-mode:arrival', profileKey = 'profile:77',
         travelKey = 'travel:77', generation = 'npc:profile:77:1'

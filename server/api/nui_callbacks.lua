@@ -400,8 +400,14 @@ end
 if type(registerNetEvent) == 'function' and type(addEventHandler) == 'function' then
     registerNetEvent('gnsh-nightshift:nui:request')
     addEventHandler('gnsh-nightshift:nui:request', function(id, method, payload)
-        local playerSource = source
-        if type(triggerClientEvent) ~= 'function' or type(playerSource) ~= 'number' then return end
+        -- FXServer may expose the event source as either a number or a
+        -- numeric string depending on the host/runtime boundary. Normalize
+        -- it once, while still rejecting console, fractional, and non-finite
+        -- values so every response remains bound to a real player source.
+        local playerSource = tonumber(source)
+        if type(triggerClientEvent) ~= 'function' or type(playerSource) ~= 'number'
+            or playerSource ~= playerSource or playerSource == math.huge or playerSource == -math.huge
+            or playerSource < 1 or playerSource ~= math.floor(playerSource) then return end
         if not requestId(id) or type(method) ~= 'string' or not allowedMethods[method] or type(payload) ~= 'table' then
             triggerClientEvent('gnsh-nightshift:nui:response', playerSource, id or '', errorResult(id or '', 'NUI_REQUEST_INVALID', 'Request is invalid'))
             return

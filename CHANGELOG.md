@@ -39,6 +39,9 @@ All notable changes to NightShift are documented here.
 - Production recovery cannot be disabled or skipped before `READY`, and the
   coverage gate accepts both pipe-delimited and whitespace-column LuaCov rows
   without falling back to an unmeasured summary.
+- Hardened the NUI server event boundary to normalize numeric-string player
+  sources emitted by FXServer, preventing silent callback returns and the
+  resulting `Server did not respond in time` marketplace/booking timeouts.
 - Remediation evidence matrices now distinguish automated contract results from
   live runtime evidence; unsupported framework/S28 release PASS placeholders
   are marked BLOCKED until an operator records versions, logs, and cleanup.
