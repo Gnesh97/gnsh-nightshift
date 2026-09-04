@@ -233,7 +233,11 @@ end
 
 function Service:get(workerKey)
     if not token(workerKey, 160) then return invalid('NPC worker key is invalid') end
-    local expiry = self:expire()
+    -- Reads may run while a booking transaction holds a worker row lock. Keep
+    -- the in-process snapshot fresh, but leave the persistent expiry UPDATE to
+    -- the scheduled/explicit expiry path so history and marketplace queries
+    -- remain read-only and bounded.
+    local expiry = self:expire(nil, { persist = false })
     if type(expiry) == 'table' and not expiry.ok then return expiry end
     -- Prefer the immutable in-process snapshot once a worker has been
     -- materialized. This keeps repeated ensurePool calls idempotent even when
@@ -283,7 +287,9 @@ function Service:listAvailable(options)
     options = options or {}
     local valid, invalidKey = validateFilters(options)
     if not valid then return invalid('NPC worker filter is invalid', { field = invalidKey }) end
-    local expiry = self:expire()
+    -- The repository query already filters expired workers. Do not perform a
+    -- write-side expiry sweep as part of a marketplace read.
+    local expiry = self:expire(nil, { persist = false })
     if type(expiry) == 'table' and not expiry.ok then return expiry end
     if self._repository and type(self._repository.listWorkers) == 'function' then
         local result = self._repository:listWorkers(options)
@@ -398,8 +404,10 @@ function Service:release(workerKey, bookingId)
     return Result.ok(copy(worker), { idempotent = false })
 end
 
-function Service:expire(at)
+function Service:expire(at, options)
     at = tonumber(at) or now(self._clock)
+    options = type(options) == 'table' and options or {}
+    local persist = options.persist ~= false
     local expired, released = 0, 0
     for workerKey, worker in pairs(self._workers) do
         if worker.state == 'RESERVED' and type(worker.holdUntil) == 'number' and worker.holdUntil <= at then
@@ -416,7 +424,7 @@ function Service:expire(at)
         end
     end
     local persisted = 0
-    if self._repository and type(self._repository.expireWorkers) == 'function' then
+    if persist and self._repository and type(self._repository.expireWorkers) == 'function' then
         local result = self._repository:expireWorkers()
         if type(result) ~= 'table' then return workerError(Codes.NPC_WORKER_UNAVAILABLE, 'NPC worker expiry returned an invalid result') end
         if not result.ok then return result end

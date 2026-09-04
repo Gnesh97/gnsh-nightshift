@@ -25,6 +25,9 @@ assert(app:find('document%.documentElement'), 'React visibility state must targe
 assert(app:find('documentRoot%.dataset%.nuiVisible'), 'React visibility state must synchronize the document gate')
 assert(app:find('if %(event%.data%?%.type === "nightshift:visibility"%)'), 'NUI must only react to the visibility message')
 assert(app:find('if %(!visible%) return null'), 'closed NUI must not render the application panel')
+assert(app:find('if (!visible) return\n', 1, true), 'hidden NUI must defer server queries until the panel is visible')
+assert(app:find('}, [district, level, visible])', 1, true), 'marketplace query must refresh when NUI visibility changes')
+assert(app:find('}, [loadBookings, visible])', 1, true), 'booking query must refresh when NUI visibility changes')
 
 local distHtml = read('web/dist/index.html')
 

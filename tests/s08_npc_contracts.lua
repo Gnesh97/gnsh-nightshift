@@ -173,4 +173,23 @@ do
     check(not invalid.ok and invalid.error.code == NightShift.Errors.Codes.MARKETPLACE_INVALID, 'invalid marketplace pagination must fail closed')
 end
 
+do
+    -- Read-only marketplace/history requests must not synchronously run the
+    -- persistent expiry UPDATE. A locked worker row would otherwise make the
+    -- NUI request wait until its client-side timeout.
+    local expiryCalls = 0
+    local readProfile = assert(generator:generate({ role = 'WORKER', seed = 'read-only', profileKey = 'npc-worker:read-only' })).value
+    local readRow = { id = 77, workerKey = 'npc-worker:read-only', profileId = 77, state = 'AVAILABLE', profile = readProfile }
+    local readRepository = {
+        expireWorkers = function() expiryCalls = expiryCalls + 1; return NightShift.Result.ok({ expired = 0 }) end,
+        listWorkers = function() return NightShift.Result.ok({ readRow }) end,
+        findWorkerByKey = function() return NightShift.Result.ok(readRow) end
+    }
+    local readService = assert(WorkerService.new({ repository = readRepository, clock = clock }))
+    local listed = readService:listAvailable({ limit = 1, offset = 0 })
+    check(listed.ok and expiryCalls == 0, 'marketplace reads must not run persistent worker expiry')
+    local fetched = readService:get('npc-worker:read-only')
+    check(fetched.ok and expiryCalls == 0, 'booking history worker reads must not run persistent worker expiry')
+end
+
 print('NS-080..NS-083 tests passed: NPC profiles, deterministic generation, atomic worker availability, and privacy-safe marketplace')

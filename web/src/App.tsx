@@ -186,6 +186,10 @@ export default function App() {
   }, [hydrateFlowToken])
 
   useEffect(() => {
+    // Do not let the hidden browser page race the client/server bridge during
+    // resource startup. A fresh request is issued when the panel becomes
+    // visible, so errors cannot be carried over from a stale hidden request.
+    if (!visible) return
     let mounted = true
     // oxlint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true)
@@ -204,19 +208,19 @@ export default function App() {
       }
     })
     return () => { mounted = false }
-  }, [district, level])
+  }, [district, level, visible])
 
   useEffect(() => {
+    if (!visible) return
     // oxlint-disable-next-line react-hooks/set-state-in-effect
     loadBookings()
-  }, [loadBookings])
+  }, [loadBookings, visible])
 
   useEffect(() => {
     const receiveMessage = (event: MessageEvent<{ type?: string; visible?: boolean }>) => {
       if (event.data?.type === "nightshift:visibility") {
         const nextVisible = event.data.visible === true
         setVisible(nextVisible)
-        if (nextVisible) loadBookings()
       }
     }
     window.addEventListener("message", receiveMessage)

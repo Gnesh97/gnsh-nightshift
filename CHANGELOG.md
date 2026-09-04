@@ -42,6 +42,10 @@ All notable changes to NightShift are documented here.
 - Hardened the NUI server event boundary to normalize numeric-string player
   sources emitted by FXServer, preventing silent callback returns and the
   resulting `Server did not respond in time` marketplace/booking timeouts.
+- NUI marketplace and reservation reads now wait for the panel visibility
+  event before querying, eliminating startup races and stale hidden-page
+  errors. Persistent NPC expiry sweeps are no longer run inside read paths;
+  the scheduled/explicit expiry operation remains the only write-side sweep.
 - Remediation evidence matrices now distinguish automated contract results from
   live runtime evidence; unsupported framework/S28 release PASS placeholders
   are marked BLOCKED until an operator records versions, logs, and cleanup.
